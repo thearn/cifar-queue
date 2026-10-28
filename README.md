@@ -2,7 +2,7 @@
 
 This repository is a test problem for solve-queue, our compute queue library (not public at the moment). solve-queue is a thin wrapper that takes local and cloud GPUs and CPUs from a mix of sources (here a local RTX 4060 and Colab VMs) and presents them as one compute pool, so that HPC and ML workflows can be submitted as ordinary function calls without caring where they run. It handles environment and code sync, sending only what changed to storage buckets in the same cloud region as the compute to avoid egress costs, and copying between regions only when a job needs it. It close to a mix of different queue managers but handles my own unique needs.
 
-I plan to push and update my test models publically.
+I plan to push and update my test models publically. The code is on GitHub ([thearn/cifar-queue](https://github.com/thearn/cifar-queue)) and the trained model on the Hugging Face hub ([thearn/cifar10-resnet9](https://huggingface.co/thearn/cifar10-resnet9)), which holds a snapshot of this repository at each publish.
 
 This one is a small CNN trained on CIFAR-10 and tuned with Optuna. It was chosen because it has a well-known reference benchmark, and it exercises the queue's ML path: environment profiles, data blobs, function jobs, and distributed hyperparameter search using solve-queue's simple functional callback structure.
 
@@ -15,6 +15,17 @@ The model is a ResNet-9 in the style of David Page's DAWNBench entry (94 % test 
 Note that the logit scaling matters more than it looks. At 4 epochs, scaling the logits by 0.125, using a cosine classifier, or batch-normalising the logits each gave roughly +10 points over a plain linear head (70.1 % to 80-82 %), which is why the space has all three.
 
 ## Running
+
+Without solve-queue, the package trains and loads models directly (a CUDA GPU for training, any device for inference):
+
+```bash
+pip install -e '.[train]'
+python scripts/prepare_data.py
+python -c "from cifarq.train import train; print(train(epochs=16, save='model')['test_acc'])"
+python -c "from cifarq.hub import ResNet9; net = ResNet9.from_pretrained('thearn/cifar10-resnet9')"
+```
+
+The three run modes and the champion go through the queue:
 
 ```bash
 uv venv ~/.venvs/cifarq --python 3.12
