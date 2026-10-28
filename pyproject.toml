@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cifarq"
+version = "0.1.0"
+description = "CIFAR-10 with a small CNN, trained and tuned through the solve queue (local GPU and Colab VMs)"
+requires-python = ">=3.11"
+dependencies = ["torch>=2.4", "numpy", "optuna>=4", "pyarrow", "pillow", "huggingface_hub",
+                "solve-queue[gcs]"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

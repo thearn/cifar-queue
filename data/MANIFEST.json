@@ -1,0 +1,30 @@
+{
+ "source": "https://huggingface.co/datasets/uoft-cs/cifar10",
+ "revision": "0b2714987fa478483af9968de7c934580d0bb9a2",
+ "parquet_sha256": {
+  "plain_text/train-00000-of-00001.parquet": "8428b53a88a11ac374111006708df51469e315a22ac6d66470afd9c78d2ae883",
+  "plain_text/test-00000-of-00001.parquet": "841389e6f2d64f28bf17310e430aebac20ec3ba611a3c5e231dc93c645ce84de"
+ },
+ "file": "cifar10-7402b38b8f00.npz",
+ "sha256": "7402b38b8f00dc338348d092c1b3aa71e1cc24bd56f291e70ffba433e6ce8f8a",
+ "shapes": {
+  "x_train": [
+   50000,
+   32,
+   32,
+   3
+  ],
+  "y_train": [
+   50000
+  ],
+  "x_test": [
+   10000,
+   32,
+   32,
+   3
+  ],
+  "y_test": [
+   10000
+  ]
+ }
+}
