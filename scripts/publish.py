@@ -55,12 +55,6 @@ keeping the seed with the median validation accuracy (seed {c['seed']}: {c['val_
 |---|---|---|---|
 {runs}
 
-```python
-from cifarq.hub import ResNet9            # pip install git+https://huggingface.co/{MODEL_REPO}
-net = ResNet9.from_pretrained('{MODEL_REPO}')
-probs = net.predict(images)              # uint8 (n, 32, 32, 3) RGB -> (n, 10); net.classes names the columns
-```
-
 `hyperparameters.json` is the full training configuration.""" + (f""" [The demo](https://huggingface.co/spaces/{SPACE_REPO})
 classifies uploaded images.""" if space else '') + '\n'
     head, _, rest = readme.partition('\n## ')                # after the introduction
