@@ -98,6 +98,12 @@ def space(trial) -> dict:
     return p
 
 
+def train_params(params: dict) -> dict:
+    """A point of the space as the search records it (a trial's ``params``, or ``PAGE``) as ``train``'s arguments."""
+    import optuna
+    return space(optuna.trial.FixedTrial(params))
+
+
 def job_options(params: dict) -> dict:
     """A trial's queue options: its expected minutes and GPU memory by width and length (an L4 or the 4060)."""
     w, e = params.get('width', 32), params.get('epochs', 10)

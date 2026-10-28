@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,8 +7,13 @@ name = "cifarq"
 version = "0.1.0"
 description = "CIFAR-10 with a small CNN, trained and tuned through the solve queue (local GPU and Colab VMs)"
 requires-python = ">=3.11"
-dependencies = ["torch>=2.4", "numpy", "optuna>=4", "pyarrow", "pillow", "huggingface_hub",
-                "solve-queue[gcs]"]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+dependencies = ["torch>=2.4", "numpy", "huggingface_hub>=0.25", "safetensors"]
+
+[project.optional-dependencies]
+train = ["optuna>=4", "pyarrow", "pillow"]          # training data, the search
+queue = ["solve-queue[gcs]"]                         # the three run modes (solve-queue: not public)
 
 [tool.setuptools.packages.find]
 where = ["src"]

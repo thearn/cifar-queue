@@ -182,9 +182,11 @@ class EMA:
                     v.copy_(theirs[k])
 
 
-def train(data: str | None = None, **hyperparameters) -> dict:
+def train(data: str | None = None, save: str | None = None, **hyperparameters) -> dict:
     """Train one model with ``DEFAULTS`` updated by ``hyperparameters`` (an unknown name is an error); its validation
-    and test accuracy, time and throughput, and the per-epoch history."""
+    and test accuracy, time and throughput, and the per-epoch history. ``save``: a directory (relative: in the job's
+    directory, which comes back with the job) to write the trained network to as a ``hub.ResNet9`` (the EMA's weights
+    when there is one)."""
     import numpy as np
     import torch
     import torch.nn.functional as F
@@ -280,7 +282,11 @@ def train(data: str | None = None, **hyperparameters) -> dict:
             break
     torch.cuda.synchronize()
     seconds = time.time() - t0
-    return {'val_acc': history[-1]['val_acc'], 'test_acc': round(accuracy(x_test, y_test), 4), 'train_seconds': round(seconds, 1),
-            'images_per_s': round(len(history) * steps_per_epoch * h['batch_size'] / seconds),
-            'params': sum(p.numel() for p in net.parameters()), 'device': torch.cuda.get_device_name(0),
-            'history': history, 'hyperparameters': h}
+    out = {'val_acc': history[-1]['val_acc'], 'test_acc': round(accuracy(x_test, y_test), 4), 'train_seconds': round(seconds, 1),
+           'images_per_s': round(len(history) * steps_per_epoch * h['batch_size'] / seconds),
+           'params': sum(p.numel() for p in net.parameters()), 'device': torch.cuda.get_device_name(0),
+           'history': history, 'hyperparameters': h}
+    if save:
+        from .hub import save as save_model
+        out['saved'] = str(save_model(ema.module if ema is not None else net, h, save))
+    return out
