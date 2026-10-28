@@ -5,6 +5,7 @@ here are deleted there), its commit message the local commit.
 
     python scripts/publish.py --private          # first time: both repos private, made public by hand after a look
     python scripts/publish.py                    # later: update both (visibility unchanged)
+    python scripts/publish.py --no-space         # the model repo only (a Gradio Space needs PRO or ZeroGPU)
 """
 import argparse
 import io
@@ -22,7 +23,7 @@ MODEL_REPO, SPACE_REPO = 'thearn/cifar10-resnet9', 'thearn/cifar10-resnet9-demo'
 WEIGHTS = ('model.safetensors', 'config.json', 'hyperparameters.json')
 
 
-def card(readme: str, champion: dict, revision: str) -> str:
+def card(readme: str, champion: dict, revision: str, space: bool = True) -> str:
     c = champion['chosen']
     runs = '\n'.join(f"| {r['seed']} | {r['val_acc'] * 100:.1f} % | {r['test_acc'] * 100:.1f} % | {r['device']} |"
                      for r in champion['runs'])
@@ -60,9 +61,8 @@ net = ResNet9.from_pretrained('{MODEL_REPO}')
 probs = net.predict(images)              # uint8 (n, 32, 32, 3) RGB -> (n, 10); net.classes names the columns
 ```
 
-`hyperparameters.json` is the full training configuration, and [the demo](https://huggingface.co/spaces/{SPACE_REPO})
-classifies uploaded images.
-"""
+`hyperparameters.json` is the full training configuration.""" + (f""" [The demo](https://huggingface.co/spaces/{SPACE_REPO})
+classifies uploaded images.""" if space else '') + '\n'
     head, _, rest = readme.partition('\n## ')                # after the introduction
     return meta + head + use + '\n## ' + rest
 
@@ -70,6 +70,7 @@ classifies uploaded images.
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--champion', default=None, help='a results/champion/*.json (default: the latest)')
+    ap.add_argument('--no-space', action='store_true', help='publish the model repo only')
     ap.add_argument('--private', action='store_true', help='create the repos private (only when they do not exist)')
     a = ap.parse_args()
     git = lambda *args: subprocess.run(['git', '-C', str(REPO), *args], capture_output=True, check=True).stdout
@@ -87,10 +88,12 @@ if __name__ == '__main__':
         tarfile.open(fileobj=io.BytesIO(git('archive', '--format=tar', 'HEAD'))).extractall(stage, filter='data')
         for f in WEIGHTS:
             (stage / f).write_bytes((model_dir / f).read_bytes())
-        (stage / 'README.md').write_text(card((stage / 'README.md').read_text(), champion, revision))
+        (stage / 'README.md').write_text(card((stage / 'README.md').read_text(), champion, revision, space=not a.no_space))
         api.create_repo(MODEL_REPO, private=a.private, exist_ok=True)
         print(api.upload_folder(repo_id=MODEL_REPO, folder_path=stage, delete_patterns='*',
                                 commit_message=f'cifar-queue {sha}: champion {champion_file.stem}'))
+    if a.no_space:
+        raise SystemExit(0)
     api.create_repo(SPACE_REPO, repo_type='space', space_sdk='gradio', private=a.private, exist_ok=True)
     print(api.upload_folder(repo_id=SPACE_REPO, repo_type='space', folder_path=REPO / 'space', delete_patterns='*',
                             ignore_patterns=['__pycache__/*', '*.pyc'], commit_message=f'cifar-queue {sha}'))
