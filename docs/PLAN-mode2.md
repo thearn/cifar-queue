@@ -264,8 +264,9 @@ The two lie on the same trade-off: at half the compute they cut about the same s
 conformal guarantee bounds good-and-pruned trials over all trials, so protecting a top 10 % needs alpha near 0.02 or
 lower (at 0.05-0.2 it cut most of them); it needs one step grid (resampling to percent of training made it work on
 our mixed-length trials), ~100 calibration curves at that alpha, and exchangeable trials (TPE voids the guarantee).
-Ours stays the default; the resampling and a replay of compute against good trials cut are worth offering to its
-author instead of a competing package.
+Ours stays the default. The resampling and a replay of compute against good trials cut could be offered to its
+author, but not yet: nothing is offered upstream (to Optuna, Ray or OptunaHub) until it holds on much larger
+problems than this one (the user, 2026-10-29).
 
 **Still running:** the cold comparisons, two seeds of no pruning, `rungs` and Ray's ASHA (schedule-free in the space),
 on the two L4s until about 16:15.
