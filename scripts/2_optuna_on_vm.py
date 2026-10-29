@@ -16,7 +16,8 @@ if __name__ == '__main__':
     ap.add_argument('--pruner', default='none', choices=('none', 'asha', 'hyperband', 'median'),
                     help='early stopping by the study (each trial reports its validation accuracy every epoch)')
     ap.add_argument('--minutes', type=float, help='stop asking for trials after this long (a fixed budget)')
-    ap.add_argument('--concurrent', type=int, help='trainings at once (a stored calibration) instead of measuring it')
+    ap.add_argument('--concurrent', type=int, help="trainings at once instead of measuring it (default: the card's stored "
+                    "count, solve-queue cards.slots(..., 'cifar-trial'), else measured and stored)")
     ap.add_argument('--executor', default=L4A, help='the executor (colab:NAME without colab:)')
     ap.add_argument('--gpu', default='L4', help="the executor's card when it is registered here (L4, G4, A100, T4)")
     ap.add_argument('--high-mem', action='store_true', help="the card's high-RAM shape (the A100 80 GB)")
@@ -24,6 +25,12 @@ if __name__ == '__main__':
                                                             'job brought back) on a new job, after the old one died')
     a = ap.parse_args()
     ensure_executor(a.executor, gpu=a.gpu, shape='high-mem' if a.high_mem else None)
+    if a.concurrent is None:
+        from solve_queue import cards
+        stored = (cards.card(a.gpu, 'high-mem' if a.high_mem else None).get('slots') or {}).get('cifar-trial')
+        if stored:
+            a.concurrent = stored
+            print(f'{a.gpu}: {stored} trainings at once (stored)', flush=True)
     resume = {}
     if a.resume:
         dbs = sorted((RESULTS / 'jobs' / 'on-vm').glob('*/study.db'), key=lambda p: p.stat().st_mtime)
@@ -63,6 +70,11 @@ if __name__ == '__main__':
                       f"best {doc['best_value']} (trial {doc['best_trial']}, test {doc['best_test_acc']})", flush=True)
         result = future.result()
     result['wall_seconds_from_submit'] = round(time.time() - t0, 1)
+    if not a.concurrent and result.get('calibration') and not result['calibration'][0].get('given'):
+        # the card's measured trainings at once, kept for the next run (solve-queue cards.json: --concurrent unneeded)
+        from solve_queue import cards
+        cards.set_slots(a.gpu, 'high-mem' if a.high_mem else None, 'cifar-trial', int(result['concurrent']))
+        print(f'recorded: {a.gpu} runs {result["concurrent"]} cifar trainings at once', flush=True)
     if (future.job / 'study.db').exists():
         shutil.copy(future.job / 'study.db', RESULTS / 'on-vm-study.db')
     print(json.dumps(result, indent=1))
