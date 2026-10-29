@@ -88,6 +88,51 @@ pool can use the same turns (step 3).
    - The queue leases and stages the VMs, samples them, and replaces a lost one.
    - Per-trial jobs stay for long trials (hours each), where the queue's per-trial records earn their cost.
 
+## What the first L4 comparison found, and what the literature offers (2026-10-29)
+
+**The finding.** The same 30-minute search on two L4s: no pruning reached 93.58 % validation with 21 trials; Optuna's
+ASHA ran 31 trials (8 completed, 23 pruned) and reached 91.42 %. ASHA pruned trial 0, Page's recipe, which completes
+at 93.6 %, at 33 % of its training (77.5 % there, against another trial's 82 %). Its schedule holds a high learning
+rate through the middle and gains most of its accuracy as the rate decays at the end, so early accuracy ranks it low.
+This is the "slow starter" problem of successive halving, and Hyperband and Ray's ASHA use the same signal.
+
+**Fixes, by where they act** (sources at the end):
+
+| Fix | What it does | Fits here because | Cost |
+|---|---|---|---|
+| A first rung from data | rank correlation of accuracy at each percent of training against final accuracy, from completed curves; no pruning before it is high | we have full curves (the no-pruning run) | small: solve-queue `hpo` |
+| Soft ranking (PASHA, ICLR 2023) | ties within ε (0.025 suggested) count as equal at a rung; the maximum budget grows only while the top ranks keep changing | SGD noise between close configurations; PASHA reports ~1/3 of ASHA's time at no accuracy loss | small: a pruner in solve-queue |
+| Best-so-far smoothing | report the running maximum of validation accuracy | high-rate epochs jump around | trivial |
+| A schedule-free optimizer (Defazio et al., NeurIPS 2024; `schedulefree`) | evaluate the averaged iterate: a model that is good at any point, with no decay phase to wait for | removes the cause: early accuracy then predicts final accuracy | moderate: an optimizer option in `train`, and a check that it trains as well |
+| Recurring learning rate (MORL, WACV 2023) | each successive-halving rung trains with a schedule that decays to its own end, re-warmed at the next | made for exactly this slow-starter case with CNNs | larger: trials resumable rung by rung |
+| Learning-curve extrapolation (LC-PFN, NeurIPS 2023) | a pre-trained transformer predicts the rest of a curve from its start in one pass; stop a trial when it is unlikely to beat the best | 2-6x speed-ups on 45 datasets at negligible overhead; a pruner like any other | moderate: an Optuna pruner wrapping `lcpfn` |
+| Freeze-thaw BO (ifBO / FT-PFN, ICML 2024) | pause and resume trials, choosing which to continue from curve extrapolations | state of the art on deep-learning HPO benchmarks | larger: resumable trials and a different driver |
+| PriorBand (NeurIPS 2023, NePS) | Hyperband that samples around an expert prior, recovering if the prior is bad | Page's recipe is a strong prior | moderate: another driver |
+| One epoch, then top-K ("Is One Epoch All You Need", 2023) | train all briefly, keep the best few | the baseline every multi-fidelity method should beat; here it should fail on slow starters, which tells us how much the schedule matters | trivial |
+
+**Order adopted.** Step 1 becomes:
+1. Measure the rank correlation from the no-pruning run's curves, and set the first rung from it.
+2. Add best-so-far smoothing and a soft-ranking ASHA (PASHA's rule) in solve-queue.
+3. Re-run ASHA and Hyperband against no pruning.
+
+Then:
+- **Schedule-free training:** a schedule-free optimizer as a `train` option, with the correlation measured again. If early accuracy becomes predictive, pruning becomes safe, and the accuracy itself may improve.
+- **LC-PFN:** an LC-PFN pruner, compared with the calibrated ASHA.
+- **Freeze-thaw:** only if those leave a large gap, since it needs trials that can be paused and resumed.
+
+**Sources.**
+- [In-Context Freeze-Thaw BO (ifBO), ICML 2024](https://proceedings.mlr.press/v235/rakotoarison24a.html), [code](https://github.com/automl/ifBO)
+- [PASHA, ICLR 2023](https://arxiv.org/pdf/2207.06940), [schedulers](https://github.com/ondrejbohdal/pasha/blob/master/docs/schedulers.md)
+- [LC-PFN, NeurIPS 2023](https://proceedings.neurips.cc/paper_files/paper/2023/hash/3f1a5e8bfcc3005724d246abe454c1e5-Abstract.html)
+- [MORL, WACV 2023](https://arxiv.org/pdf/2209.12499)
+- [Schedule-Free (code)](https://github.com/facebookresearch/schedule_free)
+- [PriorBand, NeurIPS 2023](https://arxiv.org/pdf/2306.12370)
+- [Is One Epoch All You Need](https://arxiv.org/pdf/2307.15422)
+- [Deep Power Laws / scaling laws for HPO, NeurIPS 2023](https://arxiv.org/pdf/2302.00441)
+- [DyHPO, NeurIPS 2022](https://arxiv.org/pdf/2202.09774)
+- [Hyper-Tune, VLDB 2022](https://www.vldb.org/pvldb/vol15/p1256-li.pdf)
+- [Optuna pruners](https://optuna.readthedocs.io/en/stable/reference/pruners.html)
+
 ## Where each change lives
 
 | Change | Repository |
