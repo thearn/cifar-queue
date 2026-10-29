@@ -50,7 +50,7 @@ def sampler(seed: int = 0):
         return optuna.samplers.TPESampler(seed=seed, multivariate=True, group=True, constant_liar=True, n_startup_trials=16)
 
 
-def space(trial) -> dict:
+def space(trial, schedule_free: bool = True) -> dict:
     s = trial.suggest_float
     c = trial.suggest_categorical
     p = {'epochs': trial.suggest_int('epochs', 6, 30, step=2), 'width': c('width', [16, 24, 32, 48, 64]),
@@ -75,7 +75,7 @@ def space(trial) -> dict:
     # schedule-free (``train``: no decay phase; its accuracy part-way through predicts its final far better, 87 % at 30 %
     # of training against 76 % for Page's schedule, 2026-10-29): a choice of its own, with its own ranges, so studies
     # made before it still resume (a categorical's choices cannot change within a study)
-    sf = c('schedule_free', [False, True])
+    sf = c('schedule_free', [False, True]) if schedule_free else False      # (False: the space before it, for comparisons)
     if p['optimizer'] == 'sgd' and sf:
         p.update(optimizer='sgd_sf', lr=s('sf_sgd_lr', 0.05, 5.0, log=True), momentum=s('sf_momentum', 0.7, 0.98),
                  weight_decay=s('sgd_weight_decay', 1e-6, 5e-3, log=True))
@@ -164,7 +164,8 @@ def _best_by_time(study) -> list:
 
 def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2, 3, 4, 6), seed: int = 0,
           data: str | None = None, resume_from: str | None = None, pruner: str = 'none', concurrent: int | None = None,
-          minutes: float | None = None, turns: bool = True, pruner_settings: dict | None = None) -> dict:
+          minutes: float | None = None, turns: bool = True, pruner_settings: dict | None = None,
+          schedule_free: bool = True) -> dict:
     """Mode 2, run as one queue job on a VM: how many trainings the GPU runs at once with gain (``calibrate``, on
     2-epoch width-32 runs), then Optuna over the whole ``space`` with that many trials in flight as processes on the GPU, the study in
     ``study.db`` in the job's directory (brought back with the job). ``resume_from``: a study database of a run that
@@ -224,7 +225,9 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
         os.environ['SOLVEQ_DEVICE_TURNS'] = '1'             # (inherited by the pool's processes)
         pool = 2
     with GPUProcessExecutor(pool) as ex:
-        optuna_optimize(study, TRAIN, space, n_trials=n_trials, executor=ex, concurrency=pool, fixed={'data': data},
+        import functools
+        optuna_optimize(study, TRAIN, functools.partial(space, schedule_free=schedule_free), n_trials=n_trials, executor=ex,
+                        concurrency=pool, fixed={'data': data},
                         report_to=storage if pruner != 'none' else None, minutes=minutes, smooth=pruner != 'none',
                         log=progress)
     best = study.best_trial
