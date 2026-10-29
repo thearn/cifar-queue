@@ -21,6 +21,7 @@ if __name__ == '__main__':
                     'with runs made before it)')
     ap.add_argument('--cold', action='store_true', help="start without Page's recipe (for comparing methods and cards)")
     ap.add_argument('--seed', type=int, default=0, help="the sampler's seed (repeat cold runs with several)")
+    ap.add_argument('--startup', type=int, default=16, help="random trials before TPE models (a 30-minute L4 search fits ~30)")
     ap.add_argument('--minutes', type=float, help='stop asking for trials after this long (a fixed budget)')
     ap.add_argument('--concurrent', type=int, help="trainings at once instead of measuring it (default: the card's stored "
                     "count, solve-queue cards.slots(..., 'cifar-trial'), else measured and stored)")
@@ -61,11 +62,13 @@ if __name__ == '__main__':
             if a.pruner in ('median', 'rungs'):
                 raise SystemExit('the Ray driver takes asha, hyperband or none')
             future = ex.submit('cifarq.tune:on_vm_ray', n_trials=a.trials, data=str(data.path()), scheduler=a.pruner,
-                               minutes=a.minutes, concurrent=a.concurrent or 1, warm=not a.cold, seed=a.seed)
+                               minutes=a.minutes, concurrent=a.concurrent or 1, warm=not a.cold, seed=a.seed,
+                               startup=a.startup)
         else:
             future = ex.submit('cifarq.tune:on_vm', n_trials=a.trials, data=str(data.path()), pruner=a.pruner,
                                minutes=a.minutes, concurrent=a.concurrent, pruner_settings=a.pruner_settings,
-                               schedule_free=not a.no_schedule_free, warm=not a.cold, seed=a.seed, **resume)
+                               schedule_free=not a.no_schedule_free, warm=not a.cold, seed=a.seed, startup=a.startup,
+                               **resume)
         print(f'job {future.job_id}: {future.job}', flush=True)
         seen = None
         while not future.done():

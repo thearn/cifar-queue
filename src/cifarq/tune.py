@@ -42,12 +42,13 @@ PAGE = {'schedule_free': False, 'epochs': 24, 'width': 64, 'activation': 'relu',
         'cutout_size': 8, 'cutout_prob': 1.0, 'mix': 'none'}
 
 
-def sampler(seed: int = 0):
+def sampler(seed: int = 0, startup: int = 16):
     import warnings
     import optuna
     with warnings.catch_warnings():                       # (multivariate, group and constant_liar are marked experimental)
         warnings.simplefilter('ignore', optuna.exceptions.ExperimentalWarning)
-        return optuna.samplers.TPESampler(seed=seed, multivariate=True, group=True, constant_liar=True, n_startup_trials=16)
+        # (``startup``: random trials before TPE models; a 30-minute L4 search fits ~30 trials, so 16 is half of it)
+        return optuna.samplers.TPESampler(seed=seed, multivariate=True, group=True, constant_liar=True, n_startup_trials=startup)
 
 
 def space(trial, schedule_free: bool = True) -> dict:
@@ -176,7 +177,7 @@ def _best_by_time(study) -> list:
 def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2, 3, 4, 6), seed: int = 0,
           data: str | None = None, resume_from: str | None = None, pruner: str = 'none', concurrent: int | None = None,
           minutes: float | None = None, turns: bool = True, pruner_settings: dict | None = None,
-          schedule_free: bool = True, warm: bool = True) -> dict:
+          schedule_free: bool = True, warm: bool = True, startup: int = 16) -> dict:
     """Mode 2, run as one queue job on a VM: how many trainings the GPU runs at once with gain (``calibrate``, on
     2-epoch width-32 runs), then Optuna over the whole ``space`` with that many trials in flight as processes on the GPU, the study in
     ``study.db`` in the job's directory (brought back with the job). ``resume_from``: a study database of a run that
@@ -210,7 +211,7 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
             shutil.copy(resume_from, Path.cwd() / 'study.db')
         study_name = optuna.study.get_all_study_names(storage)[-1]
     study = optuna.create_study(direction='maximize', storage=storage, study_name=study_name, load_if_exists=True,
-                                sampler=sampler(seed),
+                                sampler=sampler(seed, startup),
                                 pruner=make_pruner(pruner, **(pruner_settings or (PRUNE if pruner == 'rungs' else {}))))
     if resume_from:
         recover_running(study)                               # (trials ran as processes here: those in flight run again)
@@ -248,6 +249,7 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
     others = [t.value for t in study.trials if t.state.name == 'COMPLETE' and (t.number != 0 or not warm)]
     out = {'best_value': best.value, 'best_params': best.params, 'best_test_acc': best.user_attrs.get('test_acc'),
            'best_train_seconds': best.user_attrs.get('train_seconds'), 'pruner': pruner, 'start': 'Page' if warm else 'cold',
+           'startup': startup,
            # minutes from the search's start to its first trial at 92 % and at 93 % (a cold start's measure: less luck
            # than the best value alone)
            'minutes_to': _minutes_to(study, (0.92, 0.93)),
@@ -331,7 +333,7 @@ def _ray_trainable(config: dict):
 
 
 def on_vm_ray(n_trials: int = 80, scheduler: str = 'asha', concurrent: int = 1, minutes: float | None = None,
-              seed: int = 0, data: str | None = None, warm: bool = True) -> dict:
+              seed: int = 0, data: str | None = None, warm: bool = True, startup: int = 16) -> dict:
     """Mode 2 driven by Ray Tune on the VM: the same space and Optuna's TPE sampler (Ray's ``OptunaSearch``, define-by-run
     over ``space``), Ray's own early stopping (``asha``: ``ASHAScheduler``; ``hyperband``: ``HyperBandScheduler``;
     ``none``: FIFO) on the percent of training done, ``concurrent`` trials at once sharing the GPU (each a 1/concurrent
@@ -348,7 +350,7 @@ def on_vm_ray(n_trials: int = 80, scheduler: str = 'asha', concurrent: int = 1, 
              'hyperband': lambda: HyperBandScheduler(time_attr='progress', max_t=100, reduction_factor=3),
              'none': lambda: FIFOScheduler()}[scheduler]()
     # Page's recipe first, as the Optuna driver enqueues it (the Ray run of 2026-10-29 had no starting point)
-    search = OptunaSearch(space=space, sampler=sampler(seed), metric='val_acc', mode='max',   # (module-level: Ray pickles it)
+    search = OptunaSearch(space=space, sampler=sampler(seed, startup), metric='val_acc', mode='max',   # (module-level: Ray pickles it)
                           points_to_evaluate=[dict(PAGE)] if warm else None)
     progress = _RayProgress(n_trials, concurrent)
     tuner = rtune.Tuner(
