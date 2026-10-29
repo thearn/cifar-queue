@@ -41,7 +41,7 @@ The scripts below need solve-queue, so they document how the results were produc
 The same search is run in three ways, numbered by script, to test the different paths through the queue:
 
 - **Mode 1** (`1_single.py`): one training at the defaults, as one job on a Colab L4. This tests the basic round trip.
-- **Mode 2** (`2_optuna_on_vm.py`): the whole Optuna search runs inside a single job on one L4. It first measures how many trainings the GPU can run at once before total throughput stops growing, then keeps that many in flight. The study database comes back with the job.
+- **Mode 2** (`2_optuna_on_vm.py`): the whole Optuna (or Ray Tune) search runs inside a single job on one VM. It uses the card's stored concurrency, or measures how many trainings the GPU can run at once before total throughput stops growing and stores it. Because the trials run beside the study, they can be stopped early (`--pruner rungs`, chosen from this model's curves). The study comes back with the job and is checkpointed while it runs. On a G4 it is the fastest and best way to search here (`docs/PLAN-mode2.md`).
 - **Mode 3** (`3_optuna_distributed.py`): Optuna runs on the local machine, and each trial is a separate job spread over the RTX 4060 and both L4s at once. This is the main use case: one search over a mixed pool.
 
 Two more scripts follow the search: `4_champion.py` retrains mode 3's best trial over several seeds, saving each network, and `publish.py` pushes the code and the chosen network to the hub.
@@ -51,13 +51,17 @@ uv venv ~/.venvs/cifarq --python 3.12
 uv pip install --python ~/.venvs/cifarq/bin/python -e '.[train]' -e ../solve-queue[gcs]
 ~/.venvs/cifarq/bin/python scripts/prepare_data.py
 ~/.venvs/cifarq/bin/python scripts/1_single.py                          # mode 1: one training on a Colab L4
-~/.venvs/cifarq/bin/python scripts/2_optuna_on_vm.py --trials 60         # mode 2: whole search inside one L4 job
+~/.venvs/cifarq/bin/python scripts/2_optuna_on_vm.py --trials 600 --minutes 45 --pruner rungs --executor cifar-g4 --gpu G4
+                                                                        # mode 2: a whole search in one G4 job, early stopping
+                                                                        # (--driver ray, --cold --seed N for comparisons)
+~/.venvs/cifarq/bin/python scripts/rung_check.py                        # where early stopping is safe, from complete curves
+~/.venvs/cifarq/bin/python scripts/5_pbt_g4.py                          # probe (seeds, batches, concurrency) and PBT on a G4
 ~/.venvs/cifarq/bin/python scripts/3_optuna_distributed.py --trials 80   # mode 3: trials over the 4060 and two L4s
 ~/.venvs/cifarq/bin/python scripts/4_champion.py --seeds 5              # mode 3's best retrained, networks saved
 ~/.venvs/cifarq/bin/python scripts/publish.py --no-space                # code and network to the hub
 ```
 
-Use a uv or conda Python, since a VM cannot rebuild the system one. Mode 2's calibration found one training at a time best on both the L4 and the 4060 (two at once gave 0 % and 5 % more throughput). Colab allows two GPU VMs per account, so run mode 3 after mode 2 has released its VM; `4_champion.py --targets local` uses the local GPU only, for when the VMs are busy with other work.
+Use a uv or conda Python, since a VM cannot rebuild the system one. One training at a time was best on the L4, the A100 and the G4 (two at once gave 6 % less on the G4); mode 2 runs two processes taking turns at the card instead, so one trial's set-up overlaps the other's training. To follow a run, `solveq wait ID --grep trial` prints each trial as it ends (the solve-queue skill). Colab allows two GPU VMs per account, so run mode 3 after mode 2 has released its VM; `4_champion.py --targets local` uses the local GPU only, for when the VMs are busy with other work.
 
 Trials return only their numbers, so no weights are kept from the search (80 networks at 26 MB would mostly be thrown away). Instead `4_champion.py` trains the best parameters again with `train(save='model')`, which writes the network into the job's directory, and publishes the seed with the median validation accuracy. `publish.py` refuses to run with uncommitted changes, and its hub commit names the local commit. The Gradio app in `space/` is not hosted, since a Gradio Space now needs a paid Hugging Face plan or ZeroGPU.
 
