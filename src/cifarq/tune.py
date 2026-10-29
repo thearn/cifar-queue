@@ -232,8 +232,11 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
                         log=progress)
     best = study.best_trial
     states = [t.state.name for t in study.trials]
+    others = [t.value for t in study.trials if t.state.name == 'COMPLETE' and t.number != 0]
     out = {'best_value': best.value, 'best_params': best.params, 'best_test_acc': best.user_attrs.get('test_acc'),
-           'best_train_seconds': best.user_attrs.get('train_seconds'), 'pruner': pruner,
+           'best_train_seconds': best.user_attrs.get('train_seconds'), 'pruner': pruner, 'start': 'Page',
+           # the search's own finds, apart from the starting point it was given
+           'best_other_than_start': max(others) if others else None, 'others_at_92': sum(v >= 0.92 for v in others),
            'completed': states.count('COMPLETE'), 'pruned': states.count('PRUNED'), 'failed': states.count('FAIL'),
            # the best value as the search went (seconds since its start, value): the yield against time and units
            'best_by_time': _best_by_time(study),
@@ -312,7 +315,7 @@ def _ray_trainable(config: dict):
 
 
 def on_vm_ray(n_trials: int = 80, scheduler: str = 'asha', concurrent: int = 1, minutes: float | None = None,
-              seed: int = 0, data: str | None = None) -> dict:
+              seed: int = 0, data: str | None = None, warm: bool = True) -> dict:
     """Mode 2 driven by Ray Tune on the VM: the same space and Optuna's TPE sampler (Ray's ``OptunaSearch``, define-by-run
     over ``space``), Ray's own early stopping (``asha``: ``ASHAScheduler``; ``hyperband``: ``HyperBandScheduler``;
     ``none``: FIFO) on the percent of training done, ``concurrent`` trials at once sharing the GPU (each a 1/concurrent
@@ -328,7 +331,9 @@ def on_vm_ray(n_trials: int = 80, scheduler: str = 'asha', concurrent: int = 1, 
     sched = {'asha': lambda: ASHAScheduler(time_attr='progress', max_t=100, grace_period=30, reduction_factor=2),
              'hyperband': lambda: HyperBandScheduler(time_attr='progress', max_t=100, reduction_factor=3),
              'none': lambda: FIFOScheduler()}[scheduler]()
-    search = OptunaSearch(space=space, sampler=sampler(seed), metric='val_acc', mode='max')   # (module-level: Ray pickles it)
+    # Page's recipe first, as the Optuna driver enqueues it (the Ray run of 2026-10-29 had no starting point)
+    search = OptunaSearch(space=space, sampler=sampler(seed), metric='val_acc', mode='max',   # (module-level: Ray pickles it)
+                          points_to_evaluate=[dict(PAGE)] if warm else None)
     progress = _RayProgress(n_trials, concurrent)
     tuner = rtune.Tuner(
         rtune.with_resources(_ray_trainable, {'cpu': 1, 'gpu': 1 / concurrent}),
@@ -341,7 +346,7 @@ def on_vm_ray(n_trials: int = 80, scheduler: str = 'asha', concurrent: int = 1, 
     rows = [r for r in results if r.metrics]
     finished = [r for r in rows if r.metrics.get('progress') == 100]
     best = max(finished, key=lambda r: r.metrics['val_acc']) if finished else None
-    out = {'driver': 'ray', 'scheduler': scheduler, 'trials': len(rows), 'completed': len(finished),
+    out = {'driver': 'ray', 'scheduler': scheduler, 'start': 'Page' if warm else 'cold', 'trials': len(rows), 'completed': len(finished),
            'pruned': len(rows) - len(finished), 'concurrent': concurrent,
            'best_value': best.metrics['val_acc'] if best else None,
            'best_test_acc': best.metrics.get('test_acc') if best else None,

@@ -134,11 +134,13 @@ the best trial other than it and on how many others reached 92 %:
 | No pruning | 30 | 93.10 % | 4 |
 | Optuna successive halving, 10/30/90 %, keep a third | 47 | 92.64 % (Page pruned) | 3 |
 | `rungs` (`tune.PRUNE`): 10/30/60 %, keep two thirds, best so far, at least 6 a rung | 35 | 93.30 % | 7 |
-| Ray `ASHAScheduler`, 30/60 %, keep half, best so far | 28 | 93.36 % | 5 |
+| Ray `ASHAScheduler`, 30/60 %, keep half, best so far (**cold: no Page trial**) | 28 | 93.64 % (AdamW, CELU, BN head, whitening) | 6 |
 
 The rung check's choice did what the simulation said: more good configurations than no pruning in the same time,
 none of the good ones cut. Single runs: a few tenths between them are within seed noise; the counts are the
-firmer sign.
+firmer sign. The Optuna runs began with Page's recipe as trial 0; the Ray run did not (the Ray driver passed no
+starting points), and still found the best configuration other than Page's of any run. From now on both drivers start
+from Page's recipe (Ray's `points_to_evaluate`) and summaries say which start they had.
 
 **Order adopted.** Step 1 becomes:
 1. Measure the rank correlation from the no-pruning run's curves, and set the first rung from it.
