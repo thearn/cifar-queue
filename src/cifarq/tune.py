@@ -276,6 +276,10 @@ def _ray_progress_class():
         def __init__(self, n_trials, concurrent):
             self.n, self.k, self.t0 = n_trials, concurrent, time.time()
             self.done, self.stopped, self.failed, self.best = 0, 0, 0, None
+            self.finished = []                              # (seconds from the search's start, value) of each completed trial
+
+        def minutes_to(self, levels):
+            return {str(l): next((round(s / 60, 1) for s, v in self.finished if v >= l), None) for l in levels}
 
         def _write(self):
             doc = {'when': time.time(), 'driver': 'ray', 'trials': self.done + self.stopped + self.failed,
@@ -290,6 +294,7 @@ def _ray_progress_class():
             r = trial.last_result or {}
             if r.get('progress') == 100:
                 self.done += 1
+                self.finished.append((time.time() - self.t0, r['val_acc']))
                 if self.best is None or r['val_acc'] > self.best[0]:
                     self.best = (r['val_acc'], trial.trial_id, r.get('test_acc'))
                 print(f'trial {trial.trial_id}: {r["val_acc"]:.4f} on {r.get("device", "?")}  best {self.best[0]:.4f}', flush=True)
@@ -364,7 +369,8 @@ def on_vm_ray(n_trials: int = 80, scheduler: str = 'asha', concurrent: int = 1, 
     rows = [r for r in results if r.metrics]
     finished = [r for r in rows if r.metrics.get('progress') == 100]
     best = max(finished, key=lambda r: r.metrics['val_acc']) if finished else None
-    out = {'driver': 'ray', 'scheduler': scheduler, 'start': 'Page' if warm else 'cold', 'trials': len(rows), 'completed': len(finished),
+    out = {'driver': 'ray', 'scheduler': scheduler, 'start': 'Page' if warm else 'cold', 'startup': startup,
+           'minutes_to': progress.minutes_to((0.92, 0.93)), 'trials': len(rows), 'completed': len(finished),
            'pruned': len(rows) - len(finished), 'concurrent': concurrent,
            'best_value': best.metrics['val_acc'] if best else None,
            'best_test_acc': best.metrics.get('test_acc') if best else None,
