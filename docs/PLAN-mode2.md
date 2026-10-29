@@ -220,7 +220,7 @@ training at a time with two pool processes taking turns at the card.
 | `rungs` (10/30/60 %, two thirds, best so far, 6 a rung) | 35 | 93.82 / 93.12 (Page) | 93.30 | 7 |
 | Ray ASHA, 30/60 %, half, best so far, **cold** | 28 | 93.64 / 93.23 | 93.64 (AdamW, CELU, BN head) | 6 |
 | Optuna successive halving meant at 30/60 %, run at its defaults (the settings bug) | 45 | **94.16 / 93.95** (trial 30) | 94.16 (AdamW, SiLU, BN head, 20 epochs) | not counted |
-| `rungs`, schedule-free in the space | 35 | 93.32 / 93.17 (Page) | 92.9 | schedule-free trials: 8, 7 completed, 1 pruned, best 90.02 |
+| `rungs`, schedule-free in the space | 35 | 93.32 / 93.17 (Page) | 93.08 | 5 (schedule-free trials: 8, 7 completed, 1 pruned, best 90.02) |
 
 Readings: the calibrated pruners find more good configurations than no pruning in the same time; the default ASHA
 cuts the slow starters, and whether it cuts Page's recipe is luck (one run did, one did not); AdamW with a batch-norm
