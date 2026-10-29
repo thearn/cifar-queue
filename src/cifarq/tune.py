@@ -33,7 +33,7 @@ TRAIN = 'cifarq.train:train'
 # first trial: 64 channels, batch 512, SGD with Nesterov momentum 0.9, peak learning rate 0.4 (linear up over 5 of 24
 # epochs from 0, then linearly down to 0), weight decay 5e-4, label smoothing 0.2, logits x 0.125, random crops from
 # 4-pixel reflect padding, flips, 8x8 cutout on every image; no whitening, EMA or test-time flips (his later versions)
-PAGE = {'epochs': 24, 'width': 64, 'activation': 'relu', 'batch_size': 512, 'use_dropout': False,
+PAGE = {'schedule_free': False, 'epochs': 24, 'width': 64, 'activation': 'relu', 'batch_size': 512, 'use_dropout': False,
         'use_label_smoothing': True, 'label_smoothing': 0.2, 'head': 'linear', 'use_logit_scale': True, 'logit_scale': 0.125, 'whiten': False,
         'tta_flip': False, 'optimizer': 'sgd', 'sgd_lr': 0.4, 'momentum': 0.9, 'nesterov': True, 'sgd_weight_decay': 5e-4,
         'clip': False, 'ema': False, 'warmup_frac': 5 / 24, 'warmup_start_frac': 0.005, 'decay': 'linear',
@@ -72,9 +72,19 @@ def space(trial) -> dict:
     p['dropout'] = s('dropout', 0.005, 0.5, log=True) if c('use_dropout', [False, True]) else 0.0
     p['label_smoothing'] = s('label_smoothing', 0.002, 0.3, log=True) if c('use_label_smoothing', [False, True]) else 0.0
     p['optimizer'] = c('optimizer', ['sgd', 'adamw'])
-    if p['optimizer'] == 'sgd':
+    # schedule-free (``train``: no decay phase; its accuracy part-way through predicts its final far better, 87 % at 30 %
+    # of training against 76 % for Page's schedule, 2026-10-29): a choice of its own, with its own ranges, so studies
+    # made before it still resume (a categorical's choices cannot change within a study)
+    sf = c('schedule_free', [False, True])
+    if p['optimizer'] == 'sgd' and sf:
+        p.update(optimizer='sgd_sf', lr=s('sf_sgd_lr', 0.05, 5.0, log=True), momentum=s('sf_momentum', 0.7, 0.98),
+                 weight_decay=s('sgd_weight_decay', 1e-6, 5e-3, log=True))
+    elif p['optimizer'] == 'sgd':
         p.update(lr=s('sgd_lr', 0.005, 0.8, log=True), momentum=s('momentum', 0.0, 0.97), nesterov=c('nesterov', [True, False]),
                  weight_decay=s('sgd_weight_decay', 1e-6, 5e-3, log=True))
+    elif sf:
+        p.update(optimizer='adamw_sf', lr=s('sf_adamw_lr', 1e-4, 2e-2, log=True), beta1=s('beta1', 0.7, 0.97),
+                 beta2=c('beta2', [0.98, 0.99, 0.999]), weight_decay=s('adamw_weight_decay', 1e-4, 0.5, log=True))
     else:
         p.update(lr=s('adamw_lr', 5e-5, 1e-2, log=True), beta1=s('beta1', 0.7, 0.97), beta2=c('beta2', [0.98, 0.99, 0.999]),
                  weight_decay=s('adamw_weight_decay', 1e-4, 0.5, log=True))
