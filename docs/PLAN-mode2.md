@@ -125,6 +125,21 @@ This is the "slow starter" problem of successive halving, and Hyperband and Ray'
 | PriorBand (NeurIPS 2023, NePS) | Hyperband that samples around an expert prior, recovering if the prior is bad | Page's recipe is a strong prior | moderate: another driver |
 | One epoch, then top-K ("Is One Epoch All You Need", 2023) | train all briefly, keep the best few | the baseline every multi-fidelity method should beat; here it should fail on slow starters, which tells us how much the schedule matters | trivial |
 
+**The calibrated pruners on the L4 (2026-10-29, same space, 30-minute budget each).** The best trial of every run
+that kept it was Page's recipe (enqueued first, 93.6-93.8 % across runs: seed noise), so the runs are compared on
+the best trial other than it and on how many others reached 92 %:
+
+| Run | Trials | Best other than Page | Others >= 92 % |
+|---|---|---|---|
+| No pruning | 30 | 93.10 % | 4 |
+| Optuna successive halving, 10/30/90 %, keep a third | 47 | 92.64 % (Page pruned) | 3 |
+| `rungs` (`tune.PRUNE`): 10/30/60 %, keep two thirds, best so far, at least 6 a rung | 35 | 93.30 % | 7 |
+| Ray `ASHAScheduler`, 30/60 %, keep half, best so far | 28 | 93.36 % | 5 |
+
+The rung check's choice did what the simulation said: more good configurations than no pruning in the same time,
+none of the good ones cut. Single runs: a few tenths between them are within seed noise; the counts are the
+firmer sign.
+
 **Order adopted.** Step 1 becomes:
 1. Measure the rank correlation from the no-pruning run's curves, and set the first rung from it.
 2. Add best-so-far smoothing and a soft-ranking ASHA (PASHA's rule) in solve-queue.
