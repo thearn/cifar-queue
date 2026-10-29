@@ -229,6 +229,50 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
     return out
 
 
+def _ray_progress_class():
+    """Ray Tune's callback, defined on first use (Ray imported only by the Ray driver)."""
+    from ray.tune import Callback
+
+    class RayProgress(Callback):
+        """A line per trial as it ends (completed, stopped by the scheduler, or failed) and ``progress.json`` rewritten,
+        in the Optuna driver's form: the job's log and its watched file follow a Ray search as they do an Optuna one."""
+
+        def __init__(self, n_trials, concurrent):
+            self.n, self.k, self.t0 = n_trials, concurrent, time.time()
+            self.done, self.stopped, self.failed, self.best = 0, 0, 0, None
+
+        def _write(self):
+            doc = {'when': time.time(), 'driver': 'ray', 'trials': self.done + self.stopped + self.failed,
+                   'complete': self.done, 'pruned': self.stopped, 'failed': self.failed, 'n_trials': self.n,
+                   'concurrent': self.k, 'best_value': self.best[0] if self.best else None,
+                   'best_trial': self.best[1] if self.best else None,
+                   'best_test_acc': self.best[2] if self.best else None}
+            Path('progress.json.part').write_text(json.dumps(doc, indent=1) + '\n')
+            Path('progress.json.part').replace('progress.json')
+
+        def on_trial_complete(self, iteration, trials, trial, **info):
+            r = trial.last_result or {}
+            if r.get('progress') == 100:
+                self.done += 1
+                if self.best is None or r['val_acc'] > self.best[0]:
+                    self.best = (r['val_acc'], trial.trial_id, r.get('test_acc'))
+                print(f'trial {trial.trial_id}: {r["val_acc"]:.4f} on {r.get("device", "?")}  best {self.best[0]:.4f}', flush=True)
+            else:
+                self.stopped += 1
+                print(f'trial {trial.trial_id}: pruned at {r.get("progress", "?")} % ({r.get("val_acc", float("nan")):.4f})', flush=True)
+            self._write()
+
+        def on_trial_error(self, iteration, trials, trial, **info):
+            self.failed += 1
+            print(f'trial {trial.trial_id}: failed', flush=True)
+            self._write()
+    return RayProgress
+
+
+def _RayProgress(n_trials, concurrent):
+    return _ray_progress_class()(n_trials, concurrent)
+
+
 def _ray_trainable(config: dict):
     """A Ray Tune trial: ``train`` with its config, reporting the validation accuracy after each epoch at the percent
     of training done (Ray's scheduler stops it there when it should), and its final result."""
@@ -270,13 +314,14 @@ def on_vm_ray(n_trials: int = 80, scheduler: str = 'asha', concurrent: int = 1, 
              'hyperband': lambda: HyperBandScheduler(time_attr='progress', max_t=100, reduction_factor=3),
              'none': lambda: FIFOScheduler()}[scheduler]()
     search = OptunaSearch(space=space, sampler=sampler(seed), metric='val_acc', mode='max')   # (module-level: Ray pickles it)
+    progress = _RayProgress(n_trials, concurrent)
     tuner = rtune.Tuner(
         rtune.with_resources(_ray_trainable, {'cpu': 1, 'gpu': 1 / concurrent}),
         param_space={'data': data},
         tune_config=rtune.TuneConfig(metric='val_acc', mode='max', search_alg=search, scheduler=sched,
                                      num_samples=n_trials, max_concurrent_trials=concurrent,
                                      time_budget_s=60 * minutes if minutes else None),
-        run_config=rtune.RunConfig(storage_path=str(Path.cwd() / 'ray'), name='mode2', verbose=0))
+        run_config=rtune.RunConfig(storage_path=str(Path.cwd() / 'ray'), name='mode2', verbose=0, callbacks=[progress]))
     results = tuner.fit()
     rows = [r for r in results if r.metrics]
     finished = [r for r in rows if r.metrics.get('progress') == 100]

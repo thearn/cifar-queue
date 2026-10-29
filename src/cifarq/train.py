@@ -222,14 +222,37 @@ def train(data: str | None = None, save: str | None = None, report=None, **hyper
     trainable = [p for p in net.parameters() if p.requires_grad]
     groups = [{'params': [p for p in trainable if p.ndim > 1], 'weight_decay': h['weight_decay']},
               {'params': [p for p in trainable if p.ndim <= 1], 'weight_decay': 0.0}]
-    if h['optimizer'] == 'sgd':
-        opt = torch.optim.SGD(groups, lr=h['lr'], momentum=h['momentum'], nesterov=bool(h['nesterov']) and h['momentum'] > 0)
-    else:
-        opt = torch.optim.AdamW(groups, lr=h['lr'], betas=(h['beta1'], h['beta2']))
     steps_per_epoch = len(y_train) // h['batch_size']
     total = h['epochs'] * steps_per_epoch
-    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda step: lr_factor(step, total, h))
-    ema = EMA(net, h['ema_decay']) if h['ema_decay'] else None
+    # schedule-free (Defazio et al., 2024; ``schedulefree``): no decay phase, the averaged weights good at any point, so
+    # accuracy part-way through predicts the final (early stopping's signal); its own warm-up, no LambdaLR, no EMA
+    schedule_free = h['optimizer'].endswith('_sf')
+    if schedule_free:
+        import schedulefree
+        warm = max(1, int(h['warmup_frac'] * total))
+        if h['optimizer'] == 'sgd_sf':
+            opt = schedulefree.SGDScheduleFree(groups, lr=h['lr'], momentum=h['momentum'] or 0.9, warmup_steps=warm)
+        else:
+            opt = schedulefree.AdamWScheduleFree(groups, lr=h['lr'], betas=(h['beta1'], h['beta2']), warmup_steps=warm)
+        sched = None
+    else:
+        if h['optimizer'] == 'sgd':
+            opt = torch.optim.SGD(groups, lr=h['lr'], momentum=h['momentum'], nesterov=bool(h['nesterov']) and h['momentum'] > 0)
+        else:
+            opt = torch.optim.AdamW(groups, lr=h['lr'], betas=(h['beta1'], h['beta2']))
+        sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda step: lr_factor(step, total, h))
+    ema = EMA(net, h['ema_decay']) if h['ema_decay'] and not schedule_free else None
+
+    def averaged():
+        """Schedule-free: switch to the averaged weights and refresh batch norm's statistics for them (a few training
+        batches, no gradients), as the method's authors advise for networks with batch norm."""
+        if not schedule_free:
+            return
+        opt.eval()
+        net.train()
+        with torch.no_grad(), torch.autocast('cuda', dtype=torch.bfloat16):
+            for i in range(0, min(len(y_train), 25 * h['batch_size']), h['batch_size']):
+                net(norm(x_train[i:i + h['batch_size']].float() / 255))
 
     def accuracy(x, y):
         m = ema.module if ema is not None else net
@@ -259,6 +282,8 @@ def train(data: str | None = None, save: str | None = None, report=None, **hyper
     pruned = False
     history, t0 = [], time.time()
     for epoch in range(h['epochs']):
+        if schedule_free:
+            opt.train()
         perm = torch.randperm(len(y_train), device=dev)
         loss_sum = torch.zeros((), device=dev)
         for s in range(steps_per_epoch):
@@ -285,13 +310,16 @@ def train(data: str | None = None, save: str | None = None, report=None, **hyper
             if h['grad_clip']:
                 torch.nn.utils.clip_grad_norm_(trainable, h['grad_clip'])
             opt.step()
-            sched.step()
+            if sched is not None:
+                sched.step()
             if ema is not None:
                 ema.update_parameters(net)
             loss_sum += loss.detach()
         mean_loss = (loss_sum / steps_per_epoch).item()
+        averaged()
         history.append({'epoch': epoch + 1, 'loss': round(mean_loss, 4), 'val_acc': round(accuracy(x_val, y_val), 4),
-                        'lr': round(sched.get_last_lr()[0], 6), 'seconds': round(time.time() - t0, 1)})
+                        'lr': round(sched.get_last_lr()[0] if sched is not None else opt.param_groups[0]['lr'], 6),
+                        'seconds': round(time.time() - t0, 1)})
         if not math.isfinite(mean_loss):                           # diverged: no use training on
             break
         if epoch + 1 < h['epochs'] and stop_here(round(100 * (epoch + 1) / h['epochs']), history[-1]['val_acc']):
