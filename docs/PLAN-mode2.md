@@ -183,6 +183,72 @@ Then:
 - [Hyper-Tune, VLDB 2022](https://www.vldb.org/pvldb/vol15/p1256-li.pdf)
 - [Optuna pruners](https://optuna.readthedocs.io/en/stable/reference/pruners.html)
 
+## Results log (2026-10-29)
+
+Every measurement so far, in the order taken. All searches 30 minutes on an L4 (asia-southeast1) unless noted, one
+training at a time with two pool processes taking turns at the card.
+
+**1. How well early accuracy predicts the final** (`scripts/rung_check.py`; 161 complete curves from mode 3 trials).
+
+| Point in training | Rank correlation | Top-10 % trials cut by keeping a third (latest / best so far) | Keeping half (best so far) |
+|---|---|---|---|
+| 10 % | 0.58 | 6 / 6 of 17 | 0 |
+| 20 % | 0.65 | 7 / 7 | 2 |
+| 30 % | 0.65 | 11 / 6 | 0 |
+| 40 % | 0.72 | 8 / 4 | 2 |
+| 50 % | 0.77 | 6 / 4 | 1 |
+| 60 % | 0.83 | 3 / 2 | 1 |
+| 80 % | 0.95 | 1 / 1 | 0 |
+| 90 % | 0.99 | 0 / 0 | 0 |
+
+**2. Successive halving replayed on those curves** (`simulate_rungs`; best so far).
+
+| Rungs, share kept | Compute | Top-10 % kept |
+|---|---|---|
+| 10/30/90 %, a third (Optuna's ASHA as first set) | 24 % | 5 of 17 |
+| 10/20/40/80 %, half | 27 % | 5 |
+| 20/50 %, half | 49 % | 12 |
+| 30/60 %, half (Ray's ASHA as set) | 57 % | 12 |
+| **10/30/60 %, two thirds (`tune.PRUNE`)** | 50 % | **15** |
+
+**3. The searches** (warm: Page's recipe as trial 0, unless marked cold).
+
+| Run | Trials | Best (val / test) | Best other than Page | Others >= 92 % |
+|---|---|---|---|---|
+| No pruning | 30 | 93.58 / 93.25 (Page) | 93.10 | 4 |
+| Optuna successive halving, 10/30/90 %, a third | 47 | 92.64 / 92.27 | 92.64 (Page pruned at 33 %) | 3 |
+| `rungs` (10/30/60 %, two thirds, best so far, 6 a rung) | 35 | 93.82 / 93.12 (Page) | 93.30 | 7 |
+| Ray ASHA, 30/60 %, half, best so far, **cold** | 28 | 93.64 / 93.23 | 93.64 (AdamW, CELU, BN head) | 6 |
+| Optuna successive halving meant at 30/60 %, run at its defaults (the settings bug) | 45 | **94.16 / 93.95** (trial 30) | 94.16 (AdamW, SiLU, BN head, 20 epochs) | not counted |
+| `rungs`, schedule-free in the space | 35 | 93.32 / 93.17 (Page) | 92.9 | schedule-free trials: 8, 7 completed, 1 pruned, best 90.02 |
+
+Readings: the calibrated pruners find more good configurations than no pruning in the same time; the default ASHA
+cuts the slow starters, and whether it cuts Page's recipe is luck (one run did, one did not); AdamW with a batch-norm
+head is the strongest family found (94.16 %, and the best of the cold Ray run).
+
+**4. Schedule-free training against Page's schedule** (Page's recipe, 24 epochs, on the local 4060).
+
+| Optimiser | Final val (test) | At 30 % | At 50 % | At 80 % |
+|---|---|---|---|---|
+| SGD, Page's schedule | 93.38 (93.23) | 75.8 | 85.1 | 91.5 |
+| schedule-free SGD, lr 0.4 | 90.60 (90.04) | 82.7 | 86.5 | 89.8 |
+| schedule-free SGD, lr 1.0 | 92.18 (91.88) | 87.2 | 89.4 | 91.5 |
+
+Early accuracy far more telling (87 % at 30 % against 76 %); untuned, 1.2 points below the tuned schedule. In a search
+(row 3, last), schedule-free trials were rarely pruned (as their flat curves suggest) and finished lower so far.
+
+**5. Ray's ASHA against Optuna's successive halving, as implemented** (Ray 2.59, Optuna 5.0).
+
+| | Ray `ASHAScheduler` | Optuna `SuccessiveHalvingPruner` |
+|---|---|---|
+| Rungs | `grace_period x reduction_factor^k` on the reported counter | `min_resource x reduction_factor^k` steps |
+| Cut | below the `(1 - 1/rf)` percentile of values recorded at the rung so far | not in the top `1/rf` of trials that reached the rung |
+| Early rungs | the first trial passes; the second is judged against one value | the same in effect; `bootstrap_count` prunes rather than waits |
+| A minimum of trials before cutting | none | none (`RungPruner` adds one) |
+
+**Still running:** the cold comparisons, two seeds of no pruning, `rungs` and Ray's ASHA (schedule-free in the space),
+on the two L4s until about 16:15.
+
 ## Where each change lives
 
 | Change | Repository |
