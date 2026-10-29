@@ -104,10 +104,18 @@ def train_params(params: dict) -> dict:
     return space(optuna.trial.FixedTrial(params))
 
 
+# on a VM a trial runs as a fork of solve-queue's persistent worker, which imported torch and the training code and
+# loaded the arrays once (the local GPU's jobs run as their own processes either way)
+WORKER = {'preload': ['torch', 'torch.nn.functional', 'cifarq.train', 'cifarq.data:warm']}
+
+
 def job_options(params: dict) -> dict:
-    """A trial's queue options: its expected minutes and GPU memory by width and length (an L4 or the 4060)."""
+    """A trial's queue options: its expected minutes and GPU memory by width and length (an L4 or the 4060), and the
+    persistent worker on a VM."""
     w, e = params.get('width', 32), params.get('epochs', 10)
-    return {'minutes': round(1 + e * (w / 32) ** 2 * 0.06, 1), 'gpu_mb': 1500 + 40 * w}
+    # (two trials on a VM take turns at its card: the next one's set-up overlaps this one's training)
+    return {'minutes': round(1 + e * (w / 32) ** 2 * 0.06, 1), 'gpu_mb': 1500 + 40 * w, 'worker': WORKER,
+            'vm_env': {'SOLVEQ_DEVICE_TURNS': '1'}}
 
 
 def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2, 3, 4, 6), seed: int = 0,

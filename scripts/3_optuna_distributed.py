@@ -25,13 +25,15 @@ if __name__ == '__main__':
     ap.add_argument('--trials', type=int, default=80)
     ap.add_argument('--local-slots', type=int, default=1)
     ap.add_argument('--l4-slots', type=int, default=None)
+    ap.add_argument('--l4s', type=int, default=2, choices=(1, 2), help='how many L4 executors (the account holds 2 GPU VMs)')
     ap.add_argument('--resume', nargs='?', const='latest', default=None,
                     help='continue a study (its name, or the latest) after its driver died: trials it left in flight '
                          'are reattached to their jobs, lost ones run again')
     a = ap.parse_args()
     k = a.l4_slots or l4_slots()
-    targets = {'local': a.local_slots, f'colab:{L4A}': k, f'colab:{L4B}': k}
-    for name in (L4A, L4B):
+    l4s = (L4A, L4B)[:a.l4s]
+    targets = {'local': a.local_slots, **{f'colab:{n}': k for n in l4s}}
+    for name in l4s:
         ensure_executor(name, parallel=max(k, 1))
     print(f'trials in flight: {targets}', flush=True)
     storage = f'sqlite:///{RESULTS / "distributed-study.db"}'

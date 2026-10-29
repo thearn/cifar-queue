@@ -243,6 +243,12 @@ def train(data: str | None = None, save: str | None = None, **hyperparameters) -
         m.train()
         return correct / len(y)
 
+    try:                                                     # (taking turns at the card with other trials: opt-in)
+        from solve_queue.gpu import device_turn
+    except ImportError:
+        import contextlib
+        device_turn = contextlib.nullcontext
+    turn = device_turn(); turn.__enter__()
     history, t0 = [], time.time()
     for epoch in range(h['epochs']):
         perm = torch.randperm(len(y_train), device=dev)
@@ -282,7 +288,9 @@ def train(data: str | None = None, save: str | None = None, **hyperparameters) -
             break
     torch.cuda.synchronize()
     seconds = time.time() - t0
-    out = {'val_acc': history[-1]['val_acc'], 'test_acc': round(accuracy(x_test, y_test), 4), 'train_seconds': round(seconds, 1),
+    test_acc = round(accuracy(x_test, y_test), 4)
+    turn.__exit__(None, None, None)
+    out = {'val_acc': history[-1]['val_acc'], 'test_acc': test_acc, 'train_seconds': round(seconds, 1),
            'images_per_s': round(len(history) * steps_per_epoch * h['batch_size'] / seconds),
            'params': sum(p.numel() for p in net.parameters()), 'device': torch.cuda.get_device_name(0),
            'history': history, 'hyperparameters': h}

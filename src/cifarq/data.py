@@ -67,5 +67,21 @@ def path() -> Path:
     return found[0]
 
 
+_LOADED: dict = {}
+
+
 def load(file: Path | str | None = None) -> dict:
-    return dict(np.load(file or path()))
+    """The arrays, kept in this process after the first load: on a VM, solve-queue's persistent worker loads them once
+    (``warm``) and every trial it forks reads them without a copy."""
+    key = str(Path(file or path()).resolve())
+    if key not in _LOADED:
+        _LOADED[key] = dict(np.load(key))
+    return _LOADED[key]
+
+
+def warm():
+    """Load the arrays now (the worker's preload: ``cifarq.data:warm``); nothing if there is no array file here."""
+    try:
+        load()
+    except FileNotFoundError:
+        pass
