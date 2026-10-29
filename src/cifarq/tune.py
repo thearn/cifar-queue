@@ -148,6 +148,17 @@ def _checkpoint(db: Path, out: Path):
     tmp.replace(out)
 
 
+def _minutes_to(study, levels) -> dict:
+    """{level: minutes from the first trial's start to the first completed trial reaching it, or None}."""
+    done = sorted((t for t in study.trials if t.state.name == 'COMPLETE' and t.datetime_complete), key=lambda t: t.datetime_complete)
+    starts = [t.datetime_start for t in study.trials if t.datetime_start]
+    if not done or not starts:
+        return {str(l): None for l in levels}
+    t0 = min(starts)
+    return {str(l): next((round((t.datetime_complete - t0).total_seconds() / 60, 1) for t in done if t.value >= l), None)
+            for l in levels}
+
+
 def _best_by_time(study) -> list:
     """[(seconds from the first trial's start, best value so far)] at each completed trial that raised it."""
     done = sorted((t for t in study.trials if t.state.name == 'COMPLETE' and t.datetime_complete), key=lambda t: t.datetime_complete)
@@ -165,7 +176,7 @@ def _best_by_time(study) -> list:
 def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2, 3, 4, 6), seed: int = 0,
           data: str | None = None, resume_from: str | None = None, pruner: str = 'none', concurrent: int | None = None,
           minutes: float | None = None, turns: bool = True, pruner_settings: dict | None = None,
-          schedule_free: bool = True) -> dict:
+          schedule_free: bool = True, warm: bool = True) -> dict:
     """Mode 2, run as one queue job on a VM: how many trainings the GPU runs at once with gain (``calibrate``, on
     2-epoch width-32 runs), then Optuna over the whole ``space`` with that many trials in flight as processes on the GPU, the study in
     ``study.db`` in the job's directory (brought back with the job). ``resume_from``: a study database of a run that
@@ -203,8 +214,10 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
                                 pruner=make_pruner(pruner, **(pruner_settings or (PRUNE if pruner == 'rungs' else {}))))
     if resume_from:
         recover_running(study)                               # (trials ran as processes here: those in flight run again)
-    if not study.trials:
-        study.enqueue_trial(PAGE)                            # Page's recipe first: the search starts from the reference
+    if not study.trials and warm:
+        # Page's recipe first: the search starts from the reference (a production search); cold (``warm=False``) for
+        # comparing methods and cards, whose differences a known optimum found in the first minutes would hide
+        study.enqueue_trial(PAGE)
     def progress(line: str):
         """Each trial told: its line in the log, and progress.json (replaced whole) for whoever watches the job."""
         print(line, flush=True)
@@ -232,9 +245,12 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
                         log=progress)
     best = study.best_trial
     states = [t.state.name for t in study.trials]
-    others = [t.value for t in study.trials if t.state.name == 'COMPLETE' and t.number != 0]
+    others = [t.value for t in study.trials if t.state.name == 'COMPLETE' and (t.number != 0 or not warm)]
     out = {'best_value': best.value, 'best_params': best.params, 'best_test_acc': best.user_attrs.get('test_acc'),
-           'best_train_seconds': best.user_attrs.get('train_seconds'), 'pruner': pruner, 'start': 'Page',
+           'best_train_seconds': best.user_attrs.get('train_seconds'), 'pruner': pruner, 'start': 'Page' if warm else 'cold',
+           # minutes from the search's start to its first trial at 92 % and at 93 % (a cold start's measure: less luck
+           # than the best value alone)
+           'minutes_to': _minutes_to(study, (0.92, 0.93)),
            # the search's own finds, apart from the starting point it was given
            'best_other_than_start': max(others) if others else None, 'others_at_92': sum(v >= 0.92 for v in others),
            'completed': states.count('COMPLETE'), 'pruned': states.count('PRUNED'), 'failed': states.count('FAIL'),
