@@ -268,8 +268,27 @@ Ours stays the default. The resampling and a replay of compute against good tria
 author, but not yet: nothing is offered upstream (to Optuna, Ray or OptunaHub) until it holds on much larger
 problems than this one (the user, 2026-10-29).
 
-**Still running:** the cold comparisons, two seeds of no pruning, `rungs` and Ray's ASHA (schedule-free in the space),
-on the two L4s until about 16:15.
+**7. Cold starts, two seeds** (no Page trial; the space with schedule-free; 30 minutes on an L4 each; seed 0 / seed 1).
+
+| Setup | Trials | Best val (test) | First 92 % (min) | First 93 % (min) | At 92 %+ |
+|---|---|---|---|---|---|
+| No pruning, TPE start-up 16 | 32 / 33 | 92.80 (92.79) / 92.18 (91.79) | 22.8 / 17.6 | - / - | 4 / 1 |
+| **`rungs`, start-up 16** | 36 / 38 | **93.80 (93.29)** / 92.54 (92.61) | 18.1 / 13.4 | **27.8** / - | **7 / 3** |
+| `rungs`, start-up 8 | 42 / 33 | 92.76 (91.73) / 93.02 (92.33) | 14.5 / 12.3 | - / 12.3 | 2 / 2 |
+| Ray ASHA (30/60 %, keep half, best so far) | 48 / 47 | 92.96 (92.95) / 92.68 (92.20) | 23.4 / 10.6 | - / - | 2 / 4 |
+
+Readings:
+- The calibrated pruner with the usual start-up is the strongest cold setup over the two seeds: the best average
+  result, the most configurations at 92 % or more, the only 93 % from a cold start in the first comparison
+  (93.80 %, at 27.8 minutes), and 92 % sooner than no pruning on both seeds.
+- A start-up of 8 random trials reaches 92 % sooner on both seeds (14.5 and 12.3 minutes against 18.1 and 13.4) and
+  found 93 % on seed 1, but fewer good configurations (2 and 2 against 7 and 3): faster to a good point, narrower.
+  The default stays 16 until more seeds say otherwise.
+- Ray's ASHA beat no pruning on seed 1, not on seed 0: consistent with its early rungs judged against few trials.
+- Seed to seed the spread is large (the calibrated pruner from 92.5 to 93.8 %): two seeds rank setups, they do not
+  measure small differences.
+
+
 
 ## Where each change lives
 
