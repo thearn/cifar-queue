@@ -118,6 +118,13 @@ def job_options(params: dict) -> dict:
             'vm_env': {'SOLVEQ_DEVICE_TURNS': '1'}}
 
 
+# early stopping chosen from this model's own curves (scripts/rung_check.py on 161 complete trials, 2026-10-29):
+# Page-style schedules gain most of their accuracy as the rate decays, so accuracy at 30 % of training ranks the final
+# best poorly (rho 0.65; keeping the top third there cut 11 of the 17 trials that finished in the top 10 %). Rungs at
+# 10/30/60 % keeping the best two thirds, on the best value so far, used 51 % of the compute and kept 15 of 17.
+PRUNE = {'rungs': [10, 30, 60], 'keep': 2 / 3, 'min_trials': 6}
+
+
 def _checkpoint(db: Path, out: Path):
     """A consistent copy of the study (SQLite's backup, not a file copy mid-write) as ``study-ckpt.db``: the job's
     checkpoint, sent to the bucket as it changes and restored by the queue before a lost VM's rerun."""
@@ -154,7 +161,8 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
     died (the last ``study.db`` its job brought back while it ran, sent as this job's data): copied in and continued,
     its trials in flight run again (``recover_running``). ``pruner``: early stopping by the study (``asha``,
     ``hyperband``, ``median``, ``none``: ``solve_queue.hpo.PRUNERS``), each trial reporting its validation accuracy after
-    every epoch. ``concurrent``: trainings at once, given (a stored calibration) rather than measured. ``minutes``: stop
+    every epoch; ``rungs`` is the one chosen for this model (``PRUNE``), and every pruner sees the best value so far.
+    ``concurrent``: trainings at once, given (a stored calibration) rather than measured. ``minutes``: stop
     asking for trials after this long (a fixed budget; those in flight finish). ``turns``: when one training at a time is
     best, two processes take turns at the card (``solve_queue.gpu.device_turn``), so the next trial's set-up overlaps this
     one's training. The best trial, the calibration and the timing."""
@@ -162,7 +170,7 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
     import shutil
     from solve_queue.hpo import optuna_optimize, recover_running
     from solve_queue.parallel import GPUProcessExecutor, calibrate
-    from solve_queue.hpo import PRUNERS
+    from solve_queue.hpo import make_pruner
     t0 = time.time()
     if concurrent:
         k, table = concurrent, [{'concurrent': concurrent, 'given': True}]
@@ -179,7 +187,7 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
             shutil.copy(resume_from, Path.cwd() / 'study.db')
         study_name = optuna.study.get_all_study_names(storage)[-1]
     study = optuna.create_study(direction='maximize', storage=storage, study_name=study_name, load_if_exists=True,
-                                sampler=sampler(seed), pruner=PRUNERS[pruner]())
+                                sampler=sampler(seed), pruner=make_pruner(pruner, **(PRUNE if pruner == 'rungs' else {})))
     if resume_from:
         recover_running(study)                               # (trials ran as processes here: those in flight run again)
     if not study.trials:
@@ -205,7 +213,8 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
         pool = 2
     with GPUProcessExecutor(pool) as ex:
         optuna_optimize(study, TRAIN, space, n_trials=n_trials, executor=ex, concurrency=pool, fixed={'data': data},
-                        report_to=storage if pruner != 'none' else None, minutes=minutes, log=progress)
+                        report_to=storage if pruner != 'none' else None, minutes=minutes, smooth=pruner != 'none',
+                        log=progress)
     best = study.best_trial
     states = [t.state.name for t in study.trials]
     out = {'best_value': best.value, 'best_params': best.params, 'best_test_acc': best.user_attrs.get('test_acc'),
@@ -232,8 +241,11 @@ def _ray_trainable(config: dict):
     # trial fixed at those values gives train's own arguments, as in on_vm
     config = space(optuna.trial.FixedTrial(config))
 
+    best = [float('-inf')]
+
     def report(step, value):
-        rtune.report({'val_acc': float(value), 'progress': int(step)})
+        best[0] = max(best[0], float(value))                  # the best so far (high-rate epochs jump around)
+        rtune.report({'val_acc': best[0], 'progress': int(step)})
         return False                                       # (Ray stops a trial itself)
     out = train(data=data, report=report, **config)
     rtune.report({'val_acc': out['val_acc'], 'progress': 100, 'test_acc': out.get('test_acc'),
@@ -252,7 +264,9 @@ def on_vm_ray(n_trials: int = 80, scheduler: str = 'asha', concurrent: int = 1, 
     from ray.tune.search.optuna import OptunaSearch
     t0 = time.time()
     ray.init(include_dashboard=False, log_to_driver=False, ignore_reinit_error=True)
-    sched = {'asha': lambda: ASHAScheduler(time_attr='progress', max_t=100, grace_period=10, reduction_factor=3),
+    # (Ray's rungs are geometric: grace 30 and factor 2 give 30 and 60 %, keeping half: the nearest to PRUNE that
+    # simulate_rungs found safe, 57 % of the compute, 12 of 17 top trials kept)
+    sched = {'asha': lambda: ASHAScheduler(time_attr='progress', max_t=100, grace_period=30, reduction_factor=2),
              'hyperband': lambda: HyperBandScheduler(time_attr='progress', max_t=100, reduction_factor=3),
              'none': lambda: FIFOScheduler()}[scheduler]()
     search = OptunaSearch(space=space, sampler=sampler(seed), metric='val_acc', mode='max')   # (module-level: Ray pickles it)

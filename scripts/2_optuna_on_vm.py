@@ -13,7 +13,7 @@ if __name__ == '__main__':
     ap.add_argument('--trials', type=int, default=80)
     ap.add_argument('--driver', default='optuna', choices=('optuna', 'ray'),
                     help="optuna (its pruners) or ray (Ray Tune's schedulers, Optuna's sampler through OptunaSearch)")
-    ap.add_argument('--pruner', default='none', choices=('none', 'asha', 'hyperband', 'median'),
+    ap.add_argument('--pruner', default='none', choices=('none', 'rungs', 'asha', 'hyperband', 'median'),
                     help='early stopping by the study (each trial reports its validation accuracy every epoch)')
     ap.add_argument('--minutes', type=float, help='stop asking for trials after this long (a fixed budget)')
     ap.add_argument('--concurrent', type=int, help="trainings at once instead of measuring it (default: the card's stored "
@@ -52,7 +52,7 @@ if __name__ == '__main__':
         if resume:
             ex.data = ex.data + [resume['resume_from']]
         if a.driver == 'ray':
-            if a.pruner == 'median':
+            if a.pruner in ('median', 'rungs'):
                 raise SystemExit('the Ray driver takes asha, hyperband or none')
             future = ex.submit('cifarq.tune:on_vm_ray', n_trials=a.trials, data=str(data.path()), scheduler=a.pruner,
                                minutes=a.minutes, concurrent=a.concurrent or 1)
