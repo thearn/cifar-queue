@@ -81,7 +81,22 @@ pool can use the same turns (step 3).
      `cards.json` notes, and the README's results table.
    - **Acceptance:** a table that names the card with the best validation per unit and the one with the most trials an
      hour, and what each costs.
-7. **Later: several machines on one study** (mode 3's successor).
+7. **Optional, later: population-based training as a second stage** (the user, 2026-10-29).
+   - **The method.** Ray Tune's `PopulationBasedTraining` and `PB2` (Parker-Holder et al., 2020: a Gaussian-process
+     bandit in place of random perturbation, for small populations). Optuna has no equivalent: a trial cannot take over
+     another's weights.
+   - **What it tunes.** With the architecture fixed by the search's best (members copy each other's weights, so width,
+     activation, head and whitening must be the same):
+     - learning rate, weight decay, augmentation strengths, label smoothing, mix probability;
+     - their schedules over the run.
+   - **Where.** On a G4, whose calibration should allow several members at once. Not on an L4, which runs one training
+     at a time best, so a population would wait its turn.
+   - **Prerequisites:** `train` saving and loading its state (model, optimiser, epoch) for Ray's checkpoints;
+     schedule-free training suits it (no fixed end to break when a member's settings change).
+   - **Acceptance:** test accuracy over 3-5 seeds against the search's best settings at the same units.
+   - **Not across VMs** through the queue: members exchange checkpoints during training, which wants one Ray cluster,
+     not jobs on separate VMs.
+8. **Later: several machines on one study** (mode 3's successor).
    - Optuna's gRPC storage proxy (`run_grpc_proxy_server`, `GrpcStorageProxy`, in Optuna 5.0 here) runs on the desktop.
    - It reaches each VM through an SSH reverse forward on the queue's one connection to it.
    - Each VM runs one long queue job of N Optuna workers on that storage, with native pruning and no per-trial job.
