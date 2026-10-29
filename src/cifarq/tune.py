@@ -164,14 +164,15 @@ def _best_by_time(study) -> list:
 
 def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2, 3, 4, 6), seed: int = 0,
           data: str | None = None, resume_from: str | None = None, pruner: str = 'none', concurrent: int | None = None,
-          minutes: float | None = None, turns: bool = True) -> dict:
+          minutes: float | None = None, turns: bool = True, pruner_settings: dict | None = None) -> dict:
     """Mode 2, run as one queue job on a VM: how many trainings the GPU runs at once with gain (``calibrate``, on
     2-epoch width-32 runs), then Optuna over the whole ``space`` with that many trials in flight as processes on the GPU, the study in
     ``study.db`` in the job's directory (brought back with the job). ``resume_from``: a study database of a run that
     died (the last ``study.db`` its job brought back while it ran, sent as this job's data): copied in and continued,
     its trials in flight run again (``recover_running``). ``pruner``: early stopping by the study (``asha``,
     ``hyperband``, ``median``, ``none``: ``solve_queue.hpo.PRUNERS``), each trial reporting its validation accuracy after
-    every epoch; ``rungs`` is the one chosen for this model (``PRUNE``), and every pruner sees the best value so far.
+    every epoch; ``rungs`` is the one chosen for this model (``PRUNE``), and every pruner sees the best value so far;
+    ``pruner_settings`` overrides a pruner's (e.g. ``asha`` at {"min_resource": 30, "reduction_factor": 2}).
     ``concurrent``: trainings at once, given (a stored calibration) rather than measured. ``minutes``: stop
     asking for trials after this long (a fixed budget; those in flight finish). ``turns``: when one training at a time is
     best, two processes take turns at the card (``solve_queue.gpu.device_turn``), so the next trial's set-up overlaps this
@@ -197,7 +198,8 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
             shutil.copy(resume_from, Path.cwd() / 'study.db')
         study_name = optuna.study.get_all_study_names(storage)[-1]
     study = optuna.create_study(direction='maximize', storage=storage, study_name=study_name, load_if_exists=True,
-                                sampler=sampler(seed), pruner=make_pruner(pruner, **(PRUNE if pruner == 'rungs' else {})))
+                                sampler=sampler(seed),
+                                pruner=make_pruner(pruner, **(pruner_settings or (PRUNE if pruner == 'rungs' else {}))))
     if resume_from:
         recover_running(study)                               # (trials ran as processes here: those in flight run again)
     if not study.trials:

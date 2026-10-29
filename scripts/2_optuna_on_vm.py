@@ -15,6 +15,8 @@ if __name__ == '__main__':
                     help="optuna (its pruners) or ray (Ray Tune's schedulers, Optuna's sampler through OptunaSearch)")
     ap.add_argument('--pruner', default='none', choices=('none', 'rungs', 'asha', 'hyperband', 'median'),
                     help='early stopping by the study (each trial reports its validation accuracy every epoch)')
+    ap.add_argument('--pruner-settings', type=json.loads, help='JSON: the pruner\'s settings (asha: {"min_resource": 30, '
+                    '"reduction_factor": 2}; rungs: {"rungs": [10, 30, 60], "keep": 0.67, "min_trials": 6})')
     ap.add_argument('--minutes', type=float, help='stop asking for trials after this long (a fixed budget)')
     ap.add_argument('--concurrent', type=int, help="trainings at once instead of measuring it (default: the card's stored "
                     "count, solve-queue cards.slots(..., 'cifar-trial'), else measured and stored)")
@@ -58,7 +60,7 @@ if __name__ == '__main__':
                                minutes=a.minutes, concurrent=a.concurrent or 1)
         else:
             future = ex.submit('cifarq.tune:on_vm', n_trials=a.trials, data=str(data.path()), pruner=a.pruner,
-                               minutes=a.minutes, concurrent=a.concurrent, **resume)
+                               minutes=a.minutes, concurrent=a.concurrent, pruner_settings=a.pruner_settings, **resume)
         print(f'job {future.job_id}: {future.job}', flush=True)
         seen = None
         while not future.done():
