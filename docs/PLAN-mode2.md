@@ -65,7 +65,8 @@ pool can use the same turns (step 3).
    - **Setup per card:**
      - each card's own calibration, recorded with `cards.set_slots`;
      - the best pruner from step 1;
-     - the same space and seed;
+     - the same space;
+     - a cold start with two seeds;
      - a fixed budget: 45 minutes of search per card, after the VM is ready.
    - **Measured per card:**
      - trials an hour (completed and pruned);
@@ -74,8 +75,8 @@ pool can use the same turns (step 3).
      - the best validation reached within 5, 10 and 20 units.
 
      The last is the number that decides which card mode 2 should use.
-   - **Cost:** about 20-25 units in all at the rates in CARDS.md: G4 ~6.7, A100 80 GB ~5.1, A100 ~4.0, L4 ~1.2, T4 ~0.8
-     for 45 minutes each, plus start-up.
+   - **Cost:** about 40-50 units in all with two seeds at the rates in CARDS.md: G4 ~6.7, A100 80 GB ~5.1, A100 ~4.0,
+     L4 ~1.2, T4 ~0.8 a run of 45 minutes, plus start-up.
    - **Order:** two cards at a time (the account holds two GPU VMs).
    - **Results:** added to CARDS.md beside the openEMS figures, the cheapest card for this kind of job recorded in
      `cards.json` notes, and the README's results table.
@@ -141,6 +142,16 @@ none of the good ones cut. Single runs: a few tenths between them are within see
 firmer sign. The Optuna runs began with Page's recipe as trial 0; the Ray run did not (the Ray driver passed no
 starting points), and still found the best configuration other than Page's of any run. From now on both drivers start
 from Page's recipe (Ray's `points_to_evaluate`) and summaries say which start they had.
+
+**How comparisons are run from here (the user, 2026-10-29).**
+- **Start cold:** no Page trial (`--cold`). A warm start's best is the known optimum found in the first minutes,
+  which hides differences between methods and cards; a cold start is also what a new problem looks like.
+- **Two seeds a configuration** (`--seed 0`, `--seed 1`): a cold start depends on its first random trials.
+- **Measured:**
+  - minutes (and units) to the first trial at 92 % and at 93 %;
+  - the best found;
+  - trials at 92 % or more.
+- **Production and champion searches start warm** from Page's recipe.
 
 **Order adopted.** Step 1 becomes:
 1. Measure the rank correlation from the no-pruning run's curves, and set the first rung from it.
