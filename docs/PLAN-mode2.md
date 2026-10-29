@@ -143,6 +143,13 @@ firmer sign. The Optuna runs began with Page's recipe as trial 0; the Ray run di
 starting points), and still found the best configuration other than Page's of any run. From now on both drivers start
 from Page's recipe (Ray's `points_to_evaluate`) and summaries say which start they had.
 
+**A new best, and a bug (2026-10-29).** A run meant as Optuna's successive halving at Ray's rungs found trial 30
+(AdamW, SiLU, a batch-norm head, 20 epochs): **94.16 % validation, 93.95 % test**, above Page's recipe (93.58 / 93.25)
+and the morning's best (93.66 / 93.43); its family (AdamW with a batch-norm head) also gave 93.96 % and 93.50 %, and the
+cold Ray run's best. But the trials were pruned at 10-14 % of training: the pruner's settings had not reached the
+trial processes, which rebuilt Optuna's pruner at its defaults (fixed: `make_pruner` keeps them). So that run was the
+default successive halving again, which this time kept Page's recipe: how much pruning by early accuracy is luck.
+
 **How comparisons are run from here (the user, 2026-10-29).**
 - **Start cold:** no Page trial (`--cold`). A warm start's best is the known optimum found in the first minutes,
   which hides differences between methods and cards; a cold start is also what a new problem looks like.
