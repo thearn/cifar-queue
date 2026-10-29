@@ -13,6 +13,7 @@ dependencies = ["torch>=2.4", "numpy", "huggingface_hub>=0.25", "safetensors"]
 
 [project.optional-dependencies]
 train = ["optuna>=4", "pyarrow", "pillow"]          # training data, the search
+ray = ["ray[tune]>=2.50"]                            # mode 2 driven by Ray Tune (on_vm_ray)
 queue = ["solve-queue[gcs]"]                         # the three run modes (solve-queue: not public)
 
 [tool.setuptools.packages.find]

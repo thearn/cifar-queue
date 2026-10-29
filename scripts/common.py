@@ -19,12 +19,13 @@ from cifarq import data  # noqa: E402
 L4A, L4B = 'cifar-l4a', 'cifar-l4b'
 
 
-def ensure_executor(name: str, *, gpu: str = 'L4', idle_minutes: float = 5., parallel: int | None = None):
+def ensure_executor(name: str, *, gpu: str = 'L4', idle_minutes: float = 5., parallel: int | None = None,
+                    shape: str | None = None):
     """Register ``colab:name`` (no VM until a job needs one), or update its parallel slots."""
     from solve_queue import executors
     rec = executors.load().get(name)
     if rec is None or (parallel and rec.get('parallel') != parallel):
-        executors.add(name, gpu=gpu, idle_stop_minutes=idle_minutes, parallel=parallel, log=lambda s: None)
+        executors.add(name, gpu=gpu, idle_stop_minutes=idle_minutes, parallel=parallel, shape=shape, log=lambda s: None)
         executors.update(name, parallel=parallel)
 
 

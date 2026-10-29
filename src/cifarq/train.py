@@ -182,11 +182,13 @@ class EMA:
                     v.copy_(theirs[k])
 
 
-def train(data: str | None = None, save: str | None = None, **hyperparameters) -> dict:
+def train(data: str | None = None, save: str | None = None, report=None, **hyperparameters) -> dict:
     """Train one model with ``DEFAULTS`` updated by ``hyperparameters`` (an unknown name is an error); its validation
     and test accuracy, time and throughput, and the per-epoch history. ``save``: a directory (relative: in the job's
     directory, which comes back with the job) to write the trained network to as a ``hub.ResNet9`` (the EMA's weights
-    when there is one)."""
+    when there is one). ``report``: early stopping (``solve_queue.hpo.reporter``: a study's spec, or a callable
+    ``(step, value) -> stop``): after each epoch the validation accuracy is reported at the percent of training done,
+    and a trial told to stop returns at once with ``pruned: True`` (no test evaluation)."""
     import numpy as np
     import torch
     import torch.nn.functional as F
@@ -249,6 +251,12 @@ def train(data: str | None = None, save: str | None = None, **hyperparameters) -
         import contextlib
         device_turn = contextlib.nullcontext
     turn = device_turn(); turn.__enter__()
+    if report is not None:
+        from solve_queue.hpo import reporter
+        stop_here = reporter(report)
+    else:
+        stop_here = lambda step, value: False
+    pruned = False
     history, t0 = [], time.time()
     for epoch in range(h['epochs']):
         perm = torch.randperm(len(y_train), device=dev)
@@ -286,10 +294,18 @@ def train(data: str | None = None, save: str | None = None, **hyperparameters) -
                         'lr': round(sched.get_last_lr()[0], 6), 'seconds': round(time.time() - t0, 1)})
         if not math.isfinite(mean_loss):                           # diverged: no use training on
             break
+        if epoch + 1 < h['epochs'] and stop_here(round(100 * (epoch + 1) / h['epochs']), history[-1]['val_acc']):
+            pruned = True                                         # the study's pruner: worse than its rung's best
+            break
     torch.cuda.synchronize()
     seconds = time.time() - t0
-    test_acc = round(accuracy(x_test, y_test), 4)
+    test_acc = None if pruned else round(accuracy(x_test, y_test), 4)
     turn.__exit__(None, None, None)
+    if pruned:
+        return {'val_acc': history[-1]['val_acc'], 'pruned': True, 'progress': round(100 * len(history) / h['epochs']),
+                'epochs_run': len(history), 'train_seconds': round(seconds, 1),
+                'images_per_s': round(len(history) * steps_per_epoch * h['batch_size'] / seconds),
+                'device': torch.cuda.get_device_name(0), 'history': history, 'hyperparameters': h}
     out = {'val_acc': history[-1]['val_acc'], 'test_acc': test_acc, 'train_seconds': round(seconds, 1),
            'images_per_s': round(len(history) * steps_per_epoch * h['batch_size'] / seconds),
            'params': sum(p.numel() for p in net.parameters()), 'device': torch.cuda.get_device_name(0),

@@ -118,26 +118,68 @@ def job_options(params: dict) -> dict:
             'vm_env': {'SOLVEQ_DEVICE_TURNS': '1'}}
 
 
+def _checkpoint(db: Path, out: Path):
+    """A consistent copy of the study (SQLite's backup, not a file copy mid-write) as ``study-ckpt.db``: the job's
+    checkpoint, sent to the bucket as it changes and restored by the queue before a lost VM's rerun."""
+    import sqlite3
+    tmp = out.with_suffix('.part')
+    src, dst = sqlite3.connect(db), sqlite3.connect(tmp)
+    try:
+        src.backup(dst)
+    finally:
+        src.close(); dst.close()
+    tmp.replace(out)
+
+
+def _best_by_time(study) -> list:
+    """[(seconds from the first trial's start, best value so far)] at each completed trial that raised it."""
+    done = sorted((t for t in study.trials if t.state.name == 'COMPLETE' and t.datetime_complete), key=lambda t: t.datetime_complete)
+    if not done:
+        return []
+    t0 = min(t.datetime_start for t in study.trials if t.datetime_start)
+    out, best = [], float('-inf')
+    for t in done:
+        if t.value > best:
+            best = t.value
+            out.append((round((t.datetime_complete - t0).total_seconds()), round(best, 4)))
+    return out
+
+
 def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2, 3, 4, 6), seed: int = 0,
-          data: str | None = None, resume_from: str | None = None) -> dict:
+          data: str | None = None, resume_from: str | None = None, pruner: str = 'none', concurrent: int | None = None,
+          minutes: float | None = None, turns: bool = True) -> dict:
     """Mode 2, run as one queue job on a VM: how many trainings the GPU runs at once with gain (``calibrate``, on
     2-epoch width-32 runs), then Optuna over the whole ``space`` with that many trials in flight as processes on the GPU, the study in
     ``study.db`` in the job's directory (brought back with the job). ``resume_from``: a study database of a run that
     died (the last ``study.db`` its job brought back while it ran, sent as this job's data): copied in and continued,
-    its trials in flight run again (``recover_running``). The best trial, the calibration and the timing."""
+    its trials in flight run again (``recover_running``). ``pruner``: early stopping by the study (``asha``,
+    ``hyperband``, ``median``, ``none``: ``solve_queue.hpo.PRUNERS``), each trial reporting its validation accuracy after
+    every epoch. ``concurrent``: trainings at once, given (a stored calibration) rather than measured. ``minutes``: stop
+    asking for trials after this long (a fixed budget; those in flight finish). ``turns``: when one training at a time is
+    best, two processes take turns at the card (``solve_queue.gpu.device_turn``), so the next trial's set-up overlaps this
+    one's training. The best trial, the calibration and the timing."""
     import optuna
     import shutil
     from solve_queue.hpo import optuna_optimize, recover_running
     from solve_queue.parallel import GPUProcessExecutor, calibrate
+    from solve_queue.hpo import PRUNERS
     t0 = time.time()
-    k, table = calibrate(TRAIN, {'epochs': 2, 'width': 32, 'data': data}, candidates=candidates)
+    if concurrent:
+        k, table = concurrent, [{'concurrent': concurrent, 'given': True}]
+    else:
+        k, table = calibrate(TRAIN, {'epochs': 2, 'width': 32, 'data': data}, candidates=candidates)
     t_cal = time.time() - t0
     storage = f'sqlite:///{Path.cwd() / "study.db"}'
+    ckpt = Path.cwd() / 'study-ckpt.db'
+    if not resume_from and not (Path.cwd() / 'study.db').exists() and ckpt.exists():
+        # a rerun after a lost VM: the queue restored the last checkpoint of the study (job.json checkpoint)
+        resume_from = str(ckpt)
     if resume_from:
-        shutil.copy(resume_from, Path.cwd() / 'study.db')
+        if Path(resume_from).resolve() != (Path.cwd() / 'study.db').resolve():
+            shutil.copy(resume_from, Path.cwd() / 'study.db')
         study_name = optuna.study.get_all_study_names(storage)[-1]
     study = optuna.create_study(direction='maximize', storage=storage, study_name=study_name, load_if_exists=True,
-                                sampler=sampler(seed))
+                                sampler=sampler(seed), pruner=PRUNERS[pruner]())
     if resume_from:
         recover_running(study)                               # (trials ran as processes here: those in flight run again)
     if not study.trials:
@@ -148,19 +190,89 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
         done = [t for t in study.trials if t.state.name == 'COMPLETE']
         best = max(done, key=lambda t: t.value) if done else None
         doc = {'when': time.time(), 'trials': len(study.trials), 'complete': len(done), 'n_trials': n_trials, 'concurrent': k,
+               'pruned': sum(1 for t in study.trials if t.state.name == 'PRUNED'),
                'best_value': best.value if best else None, 'best_trial': best.number if best else None,
                'best_params': best.params if best else None,
                'best_test_acc': best.user_attrs.get('test_acc') if best else None}
         Path('progress.json.part').write_text(json.dumps(doc, indent=1) + '\n')
         Path('progress.json.part').replace('progress.json')
+        _checkpoint(Path.cwd() / 'study.db', ckpt)
 
-    with GPUProcessExecutor(k) as ex:
-        optuna_optimize(study, TRAIN, space, n_trials=n_trials, executor=ex, concurrency=k, fixed={'data': data},
-                        log=progress)
+    pool = k
+    if turns and k == 1:
+        import os
+        os.environ['SOLVEQ_DEVICE_TURNS'] = '1'             # (inherited by the pool's processes)
+        pool = 2
+    with GPUProcessExecutor(pool) as ex:
+        optuna_optimize(study, TRAIN, space, n_trials=n_trials, executor=ex, concurrency=pool, fixed={'data': data},
+                        report_to=storage if pruner != 'none' else None, minutes=minutes, log=progress)
     best = study.best_trial
+    states = [t.state.name for t in study.trials]
     out = {'best_value': best.value, 'best_params': best.params, 'best_test_acc': best.user_attrs.get('test_acc'),
-           'best_train_seconds': best.user_attrs.get('train_seconds'),
-           'trials': len(study.trials), 'concurrent': k, 'calibration': table, 'calibration_seconds': round(t_cal, 1),
+           'best_train_seconds': best.user_attrs.get('train_seconds'), 'pruner': pruner,
+           'completed': states.count('COMPLETE'), 'pruned': states.count('PRUNED'), 'failed': states.count('FAIL'),
+           # the best value as the search went (seconds since its start, value): the yield against time and units
+           'best_by_time': _best_by_time(study),
+           'trials': len(study.trials), 'concurrent': k, 'pool': pool, 'turns': pool != k,
+           'calibration': table, 'calibration_seconds': round(t_cal, 1),
            'search_seconds': round(time.time() - t0 - t_cal, 1), 'device': best.user_attrs.get('device')}
     Path('summary.json').write_text(json.dumps(out, indent=1) + '\n')
+    return out
+
+
+def _ray_trainable(config: dict):
+    """A Ray Tune trial: ``train`` with its config, reporting the validation accuracy after each epoch at the percent
+    of training done (Ray's scheduler stops it there when it should), and its final result."""
+    import optuna
+    from ray import tune as rtune
+    from .train import train
+    config = dict(config)
+    data = config.pop('data', None)
+    # Ray's OptunaSearch passes the sampled values by their Optuna names (sgd_lr, use_cutout, ...): ``space`` run on a
+    # trial fixed at those values gives train's own arguments, as in on_vm
+    config = space(optuna.trial.FixedTrial(config))
+
+    def report(step, value):
+        rtune.report({'val_acc': float(value), 'progress': int(step)})
+        return False                                       # (Ray stops a trial itself)
+    out = train(data=data, report=report, **config)
+    rtune.report({'val_acc': out['val_acc'], 'progress': 100, 'test_acc': out.get('test_acc'),
+                  'train_seconds': out['train_seconds'], 'device': out['device']})
+
+
+def on_vm_ray(n_trials: int = 80, scheduler: str = 'asha', concurrent: int = 1, minutes: float | None = None,
+              seed: int = 0, data: str | None = None) -> dict:
+    """Mode 2 driven by Ray Tune on the VM: the same space and Optuna's TPE sampler (Ray's ``OptunaSearch``, define-by-run
+    over ``space``), Ray's own early stopping (``asha``: ``ASHAScheduler``; ``hyperband``: ``HyperBandScheduler``;
+    ``none``: FIFO) on the percent of training done, ``concurrent`` trials at once sharing the GPU (each a 1/concurrent
+    GPU share), and a time budget (``minutes``). The best trial and the counts, like ``on_vm``."""
+    import ray
+    from ray import tune as rtune
+    from ray.tune.schedulers import ASHAScheduler, FIFOScheduler, HyperBandScheduler
+    from ray.tune.search.optuna import OptunaSearch
+    t0 = time.time()
+    ray.init(include_dashboard=False, log_to_driver=False, ignore_reinit_error=True)
+    sched = {'asha': lambda: ASHAScheduler(time_attr='progress', max_t=100, grace_period=10, reduction_factor=3),
+             'hyperband': lambda: HyperBandScheduler(time_attr='progress', max_t=100, reduction_factor=3),
+             'none': lambda: FIFOScheduler()}[scheduler]()
+    search = OptunaSearch(space=space, sampler=sampler(seed), metric='val_acc', mode='max')   # (module-level: Ray pickles it)
+    tuner = rtune.Tuner(
+        rtune.with_resources(_ray_trainable, {'cpu': 1, 'gpu': 1 / concurrent}),
+        param_space={'data': data},
+        tune_config=rtune.TuneConfig(metric='val_acc', mode='max', search_alg=search, scheduler=sched,
+                                     num_samples=n_trials, max_concurrent_trials=concurrent,
+                                     time_budget_s=60 * minutes if minutes else None),
+        run_config=rtune.RunConfig(storage_path=str(Path.cwd() / 'ray'), name='mode2', verbose=0))
+    results = tuner.fit()
+    rows = [r for r in results if r.metrics]
+    finished = [r for r in rows if r.metrics.get('progress') == 100]
+    best = max(finished, key=lambda r: r.metrics['val_acc']) if finished else None
+    out = {'driver': 'ray', 'scheduler': scheduler, 'trials': len(rows), 'completed': len(finished),
+           'pruned': len(rows) - len(finished), 'concurrent': concurrent,
+           'best_value': best.metrics['val_acc'] if best else None,
+           'best_test_acc': best.metrics.get('test_acc') if best else None,
+           'best_params': {k: v for k, v in (best.config or {}).items() if k != 'data'} if best else None,
+           'search_seconds': round(time.time() - t0, 1)}
+    Path('summary.json').write_text(json.dumps(out, indent=1, default=str) + '\n')
+    ray.shutdown()
     return out
