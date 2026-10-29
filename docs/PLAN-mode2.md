@@ -290,6 +290,52 @@ Readings:
 
 
 
+**8. The card matrix** (step 6; cold, the calibrated pruner, 45 minutes, two seeds; ended early by the user's decision
+after the G4 and A100 40 GB runs: the A100 80 GB, T4 and 45-minute L4 runs would not change the answer).
+
+| Card, seed | Trials (pruned) | Best val (test) | First 92 % | First 93 % | Others at 92 %+ | Units | Units a trial |
+|---|---|---|---|---|---|---|---|
+| G4, 0 | 155 (13) | 94.86 (94.60) | 2.4 min | 3.5 min | 116 | ~7.0 | 0.045 |
+| G4, 1 | 177 (21) | **95.12 (94.59)** | 1.9 min | 9.1 min | 124 | ~7.0 | 0.040 |
+| A100 40 GB, 0 | 81 (10) | 94.54 (94.20) | 6.2 min | 6.2 min | 49 | ~4.4 | 0.054 |
+| A100 40 GB, 1 | 97 (17) | 94.72 (94.49) | 6.1 min | 7.1 min | 59 | ~4.4 | 0.045 |
+| L4, 30-minute cold runs (row 7) | 36-38 | 92.54-93.80 | 13.4-18.1 min | 27.8 min / none | 3-7 | ~0.8 | 0.022 |
+
+The G4 is the card for mode 2: twice the A100's trials, the best results, no dearer a trial. Three of the four best
+configurations were schedule-free AdamW (the G4's two, the A100's second), the others AdamW with a batch-norm or
+cosine head: schedule-free training, behind Page's schedule untuned (row 4), won once the search could tune it. Units
+measured with `solveq colab hours`; the cancelled A100 80 GB run cost 1.2.
+
+**9. The G4 probe** (`cifarq.pbt.probe` on the 95.12 % configuration: schedule-free AdamW, CELU, width 48, batch 256,
+30 epochs, 22 s a training).
+
+| Test | Result |
+|---|---|
+| Three seeds | val 94.84 / 94.52 / 94.98 %, test 94.58 / 94.48 / 94.65 % (mean 94.57 %) |
+| Batch 256 / 512 / 1024 / 2048 / 4096 (lr x sqrt(ratio)) | val 94.84 / 94.68 / 94.42 / 92.86 / 86.66 %; 62,600 / 62,200 / 55,100 / 45,400 / 43,700 images a second |
+| One training at a time / two | 162.8 / 153.0 trainings an hour |
+
+Wider batches lose accuracy and speed on the G4; two at once lose 6 %: the batch range and the stored slot count (1)
+stand. The search's 95.12 % was partly luck: the configuration's honest figure is 94.6 % test.
+
+**10. Population-based training** (step 7; `cifarq.pbt.run_pbt`, Ray PBT, 8 members, 4 at once, perturbed every 3
+epochs: learning rate, weight decay, label smoothing, augmentation strengths; 205 s on the G4). Members 94.44-94.71 %
+test (mean ~94.59 %), the best by validation 94.45 %: the same as the configuration trained normally (94.57 % mean).
+For 22-second runs already tuned by a 177-trial search, changing settings during training finds nothing more.
+
+## Where it ended (2026-10-29)
+
+- Step 1 (early stopping): done; `rungs` (10/30/60 %, two thirds, best so far, 6 a rung) chosen from the curves and
+  strongest in the cold comparisons; Optuna's and Ray's ASHA as first set prune good trials.
+- Step 2 (the study checkpointed): built; a deliberate VM loss not yet tried.
+- Step 3 (the pool taking turns): done; L4 mode 2 93-94 % busy, the G4 97 %.
+- Step 4 (the card by cost): done for this search: the G4, one training at a time, batches 256-1024.
+- Step 5 (what the desktop sees): done.
+- Step 6 (the card matrix): done for the G4 and A100 40 GB; ended early.
+- Step 7 (PBT): done; no gain here.
+- Step 8 (several machines on one study): not started.
+- Best model of the day: 95.12 % validation in a cold G4 search; 94.57 % test over three seeds of its configuration.
+
 ## Where each change lives
 
 | Change | Repository |

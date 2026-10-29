@@ -73,6 +73,24 @@ Trials return only their numbers, so no weights are kept from the search (80 net
 
 Page's own result is 94 %, trained on all 50000 images; here 5000 are held out for validation. Mode 3's best trial kept his architecture and optimiser and changed mostly epochs (28), learning rate (0.78), logit scale (0.066), and added a weight EMA. It found his region within about 30 trials, and the driver (the local script running Optuna) was killed twice during that run and resumed without losing a trial. Retrained over 5 seeds, the same parameters give 93.18 +- 0.16 % test, so the 0.3-point lead of the single trial over Page's single run is mostly seed noise: the search matched his recipe rather than beat it. Seed 0 reproduced the trial's validation accuracy exactly (93.66 %), and its network, the median seed by validation accuracy, is the published model (93.23 % test).
 
+## Results (2026-10-29): mode 2 on each card, early stopping, schedule-free training
+
+A cold search (no known good trial to start from), TPE with the pruner chosen from this model's own learning curves
+(`tune.PRUNE`), 45 minutes on one VM (details: `docs/PLAN-mode2.md`, "Results log"):
+
+| Card | Trials | Best val (test) | First 92 % | Units |
+|---|---|---|---|---|
+| G4 (RTX PRO 6000) | 155-177 | **95.12 % (94.59 %)** | ~2 min | ~7.0 |
+| A100 40 GB | 81-97 | 94.72 % (94.49 %) | ~6 min | ~4.4 |
+| L4 (30 minutes) | 36-38 | 93.80 % (93.29 %) | 13-18 min | ~0.8 |
+
+The best configuration, schedule-free AdamW (CELU, width 48, batch 256, 30 epochs, 22 s a training on the G4),
+retrains over three seeds to **94.57 % test** (94.48-94.65 %), above Page's recipe here (93.2 %, row 2 above). Early
+stopping needed care: Optuna's and Ray's ASHA at their usual settings cut the best trials, because these schedules
+gain most of their accuracy late; rungs chosen by replaying 161 complete curves kept them and found more good
+configurations than no pruning in the same time. Population-based training on the best configuration gave nothing
+more for runs this short.
+
 ## Watching and resuming
 
 ```bash
