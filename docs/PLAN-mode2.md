@@ -21,7 +21,9 @@ values is not passed through (a trial reports when it ends)".
 
 Mode 3 (trials as queue jobs), the same day as this plan: 85 % training time on an L4 in steady state with
 solve-queue's persistent worker (69 % without); about 12 s lost a trial (8.5 s inside the job, 3.4 s between jobs).
-A two-slot run with turns at the card is being measured.
+With two trials in flight on the L4 taking turns at the card (`solve_queue.gpu.device_turn`), 94 % training time, 53
+trials an hour (16 trials in steady state; images per second at each width unchanged, so the turns held). Mode 2's
+pool can use the same turns (step 3).
 
 ## Steps, in order of value
 
