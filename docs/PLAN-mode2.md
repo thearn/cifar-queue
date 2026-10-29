@@ -246,6 +246,27 @@ Early accuracy far more telling (87 % at 30 % against 76 %); untuned, 1.2 points
 | Early rungs | the first trial passes; the second is judged against one value | the same in effect; `bootstrap_count` prunes rather than waits |
 | A minimum of trials before cutting | none | none (`RungPruner` adds one) |
 
+**6. OptunaHub's Conformal Pruner against our rungs** (`scripts/conformal_check.py`; its rule, `surestop.KillRule`,
+fitted on 100 of the 161 curves resampled to a 5 % grid of training, both rules scored on the other 61; 200 random
+splits).
+
+| Rule | Compute | Share of the test top 10 % cut |
+|---|---|---|
+| rungs 10/30/90 %, a third | 24 % | 70 % |
+| conformal, alpha 0.03 | 41 % | 26 % |
+| **rungs 10/30/60 %, two thirds (`tune.PRUNE`)** | **51 %** | **16 %** |
+| **conformal, alpha 0.02** | **51 %** | **18 %** |
+| conformal, alpha 0.0125 | 62 % | 9 % |
+| conformal, alpha 0.05 / 0.1 / 0.2 (80 calibration curves) | 25 / 10 / 5 % | 43 / 88 / 100 % |
+| conformal with `hold_until_resolved` 0.9 | 77-86 % | 8-24 % |
+
+The two lie on the same trade-off: at half the compute they cut about the same share of the best trials. The
+conformal guarantee bounds good-and-pruned trials over all trials, so protecting a top 10 % needs alpha near 0.02 or
+lower (at 0.05-0.2 it cut most of them); it needs one step grid (resampling to percent of training made it work on
+our mixed-length trials), ~100 calibration curves at that alpha, and exchangeable trials (TPE voids the guarantee).
+Ours stays the default; the resampling and a replay of compute against good trials cut are worth offering to its
+author instead of a competing package.
+
 **Still running:** the cold comparisons, two seeds of no pruning, `rungs` and Ray's ASHA (schedule-free in the space),
 on the two L4s until about 16:15.
 
