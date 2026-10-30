@@ -1,0 +1,5 @@
+id	date	commit	goal	family	hypothesis	target	units	gpu_busy	params	epochs	seeds	val_mean	test_mean	test_sd	delta_vs_ref	p	class	latency_gpu_b1_ms	latency_cpu1_b1_ms	outcome	artifacts	note
+M0	2026-10-29	e980ead+dirty	A,B	-	frontier check: Target A open, Target B bar verified	web	0	-	-	-	-	-	-	-	-	-	-	-	-	Validated (scoped: primary literature and main repositories)	literature.md	FastBoost read: below 96 %; NAS cells under 2 M not searched in depth
+E0.4	2026-10-29	e980ead+dirty	A,B	-	CIFAR-10.1 v6 hold-out stage	local	0	-	-	-	-	-	-	-	-	-	-	-	-	Validated (data stage; no look yet)	data/manifests/holdout.json	pinned at d9982ab; 2000 images, 200 a class
+E0.1-cpu	2026-10-29	e980ead+dirty	A,B	-	footprint bench, CPU part	local	0	-	6573130	-	-	-	-	-	-	-	out	-	11.0	Promising (GPU rows and repeatability owed)	tests/test_footprint.py	width-64 model: 379 M MACs, 26.3 MB; cpu timing with af2 on the GPU
+MT-code	2026-10-29	e980ead+dirty	A	airbench	method track MT1-MT6 implemented as hyperparameters	local	0	-	-	-	-	-	-	-	-	-	-	-	-	Infrastructure (tested capability, no quality claim)	tests/test_airbench.py	MT7 not built

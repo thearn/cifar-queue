@@ -1,0 +1,10 @@
+{
+ "stage": "holdout",
+ "source": "https://raw.githubusercontent.com/modestyachts/CIFAR-10.1/d9982abb0bfc4846b8d13a11e66b887d946205d0/datasets/",
+ "revision": "d9982abb0bfc4846b8d13a11e66b887d946205d0",
+ "files": {
+  "cifar10.1_v6_data.npy": "2997188e5816f5bd545dc77771b6227828c28146049fcecf3fa10775474cacc6",
+  "cifar10.1_v6_labels.npy": "ae40beda001693674edc94d925ee8268cfe68905f8f9aff800c8dcdfcd6c9448"
+ },
+ "rows": 2000
+}
