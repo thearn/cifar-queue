@@ -1,6 +1,6 @@
 # Status: 2026-10-30-equivariant-small
 
-Updated 2026-10-30. Phase: **plan agreed (75 units, E* ≤ 150); M0 and M1 next.**
+Updated 2026-10-30. Phase: **M0 closed (framing items only left); M1 part 1 merged (937915b); M2 running on the G4.**
 
 ## Objective
 
@@ -27,7 +27,18 @@ finalist at 95.00 ± 0.08 % (one view) / 95.45 ± 0.17 % (6 views), 1.94 M, 40 e
 
 ## Jobs
 
-None.
+- **M2-epoch-curve** (G4, frozen at 937915b): finalist D1 D1 and its plain twin at 40/80/100/120/150 epochs, seeds 0-1,
+  val at 1 and 6 views; `scratchpad/m2.sh`, logs `scratchpad/m2-*.log`. Balance before 862.40.
+- M1 part 2 (local code): two-seed objective, structured receptive fields, Fourier block, SE, proxy filtering.
+
+## Findings so far
+
+- M0: Weiler & Cesa Table 5 verified (D1 D1 D1 took 0.5 of the 0.6 pp gain at long schedules); the airbench
+  successor (hiverge/cifar10-speedrun) holds the 94 % record at 1.98 s and gates TTA on confidence (our MT6). Weiler
+  & Cesa's CIFAR parameter counts and epochs: not in the fetched text (framing only; left).
+- **Correction to the last session:** `count_macs` (a3) skipped FlipConv; the finalist is 237 M MACs a view, not 93 M
+  (fixed in a4; RESULT.md corrected, 7160285).
+- Regression gate: airbench training is not bit-reproducible on the 4060 (cudnn.benchmark); gate is statistical.
 
 ## Standing instructions
 
@@ -39,6 +50,5 @@ None.
 ## Next action, in order
 
 1. (Done) Budget 75 units; epoch cap set by M2 within 80-150.
-2. M0: the four open items in `literature.md` §6.
-3. M1: `test='sealed'`, the two-seed objective, the p4m layer, BlurPool, the MAC-count test; the regression gate.
-4. M2 on the G4: the epoch curve (`experiments/M2-epoch-curve/protocol.md`, to freeze at launch).
+2. M2 readout: E* (PLAN §1).
+3. M1 part 2 while M2 runs; M3 protocol (D1/D4 patterns, BlurPool, matched params and MACs) frozen at M2's readout.

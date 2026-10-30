@@ -1,5 +1,6 @@
 # M2-epoch-curve: where a 2 M equivariant airbench crosses 96 % as epochs grow
-DRAFT: to freeze at launch with the commit of `eqsm/main` after M1's `test='sealed'` and the matched-parameter twin.
+Frozen: 2026-10-30, commit 937915b (eqsm/main, M1 part 1 merged). Configs: `results/autoresearch/eqsm/finalist-d1d1.json`,
+`twin-plain.json`. Balance before: 862.40 units. Run by `scratchpad/m2.sh` (`seeds.py ... --set epochs=E test=sealed tta_level=2`).
 Dataset dataset-6e01ae0c4036.
 
 - **Hypothesis and mechanism:** the last session's gap (95.00 % one view, 95.45 % six views at 40 epochs) is

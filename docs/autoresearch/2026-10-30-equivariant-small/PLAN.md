@@ -159,8 +159,11 @@ session, `layout` and `master`.
 **Every launch sets `SOLVEQ_SESSION=eqsm`** so the watcher and `solveq brief` see the jobs (two of the last session's
 screens ran under the wrong label).
 
-**Regression gate for code touching training:** `pytest` on the CPU, then the finalist's recipe at seed 1 for 4
-epochs on the 4060 matching the pre-change validation accuracy exactly.
+**Regression gate for code touching training:** `pytest` on the CPU; a saved model (the finalist, seed 5) predicting
+bitwise identically under the old and new code; and the finalist's recipe at seed 1 for 4 epochs on the 4060 within
+run-to-run noise of the old code (not exactly: `cudnn.benchmark` makes airbench training non-bit-reproducible here;
+measured 2026-10-30, three runs 0.8456-0.8496 val). Each run of the new code needs a changed no-op argument, or the
+queue returns the old run's result (it de-duplicates identical calls).
 
 ## 4. Compute, budget and the GPU-use rules
 

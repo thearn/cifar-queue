@@ -22,8 +22,9 @@ session's `literature.md` holds the frontier table for small CIFAR-10 models; on
 **Not found:** any result at ≤ 2 M parameters, ≤ 100 epochs and ≥ 96 % with one view. The Hugging Face hub holds no
 small CIFAR-10 checkpoint near this point (searched: convmixer, resnet9, airbench, "cifar10 small"; the hits were a
 68k-parameter ResNet20 at 82 %, a 345k model, ConvNeXt and ViT fine-tunes). The hub is not a source for this session.
-**To check in M0:** the airbench README now says its scripts are "not anymore" the fastest and links a successor
-("hiverge"); its records and rules are unread.
+**Successor (M0, read 2026-10-30):** [hiverge/cifar10-speedrun](https://github.com/hiverge/cifar10-speedrun) holds the 94 %
+record, 94.02 % in 1.98 s (A100), with vectorised Muon, brightness/contrast jitter, SiLU, SVD whitening, and TTA
+applied only to low-confidence predictions (our MT6). No 96 % track and no stated rules.
 
 ## 2. Equivariance: results, code and the points to consider
 
