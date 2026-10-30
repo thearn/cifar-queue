@@ -57,7 +57,10 @@ account's two VM slots.
 
 ## Budget
 
-- Colab cap 50 units for the session (tracked per executor, see above); spent 0. Local unlimited.
+- Colab cap 50 units for the session (tracked per executor, see above); spent 0 before M3. Local unlimited.
+- 2026-10-30 ~03:45, `colab usage`: balance 884.46 units, burn 10.05 units/h with one VM up (cifar-g4, ours; no other
+  session's VM live). The queue's card record says 8.90 for a G4, so `solveq colab hours` understates G4 spend by
+  ~13 %. Session spend is tracked as the balance's fall from 884.46 (no other VM up meanwhile), the hours table a check.
 
 ## Jobs
 
