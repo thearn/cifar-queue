@@ -1,6 +1,6 @@
 # Status: 2026-10-30-equivariant-small
 
-Updated 2026-10-30. Phase: **M6 done: test opened once. Neither target met (best 1 view 95.43 %, 6 views 95.87 %). The finalists match airbench96 on 45k at 1/5 of its parameters. Bench, CIFAR-10.1 and the write-up next.**
+Updated 2026-10-30. Phase: **session complete; result in `RESULT.md`. Waiting for the user to confirm the session is done (then branch cleanup, PLAN §3).**
 
 ## Objective
 
@@ -28,7 +28,7 @@ finalist at 95.00 ± 0.08 % (one view) / 95.45 ± 0.17 % (6 views), 1.94 M, 40 e
 
 ## Jobs
 
-- None running. **Session spend ≈ 43 units** of 75: 25.2 to 12:25 by the balance (only our VM up), then ~17.6 for M5 by our
+- None running. **Session spend ≈ 52 units** of 75 (M6 ~9.5 by VM hours on top of the ≈ 43 below): 25.2 to 12:25 by the balance (only our VM up), then ~17.6 for M5 by our
   VM's hours at 10.05/h (a second session's G4, `snapclip-g4`, has been up since ~12:25, so the balance no longer measures us).
 
 ## Run-to-run noise (M6)
@@ -102,6 +102,7 @@ one view (20 / 40 / 100 epochs).
 
 ## Next action, in order
 
-1. (Done) Budget 75 units; epoch cap set by M2 within 80-150.
-2. M2 readout: E* (PLAN §1).
-3. M1 part 2 while M2 runs; M3 protocol (D1/D4 patterns, BlurPool, matched params and MACs) frozen at M2's readout.
+1. The user confirms the session is complete.
+2. Then (PLAN §3): delete the merged branches (`eqsm/M1`, `eqsm/O4-muon`, `eqsm/fix-se`, `eqsm/M5-space`,
+   `eqsm/M6-tools`) and keep any unmerged tip as `refs/autoresearch/archive/<branch>` with its SHA in the ledger.
+   Merging `eqsm/main` into `master`, pushing and publishing only with the user's say-so.
