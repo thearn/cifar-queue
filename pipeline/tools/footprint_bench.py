@@ -34,7 +34,7 @@ def main():
         reps = [footprint.bench(m, gpu=not a.no_gpu) for _ in range(a.repeat)]
         row = reps[0]
         if a.repeat > 1:
-            row['cv'] = {name: {k: round(statistics.pstdev(v) / statistics.mean(v), 4) for k in ('p50_ms', 'peak_rss_mb', 'peak_gpu_mb')
+            row['cv'] = {name: {k: round(statistics.pstdev(v) / statistics.mean(v), 4) for k in ('p50_ms', 'rss_mb', 'peak_rss_mb', 'peak_gpu_mb')
                                 if k in reps[0]['runs'][name] and statistics.mean(v := [r['runs'][name][k] for r in reps])}
                          for name in reps[0]['runs']}
             row['repeats'] = [r['runs'] for r in reps]

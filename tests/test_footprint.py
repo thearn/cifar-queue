@@ -20,13 +20,13 @@ def test_static_counts(built, tmp_path):
 def test_measure_in_a_fresh_process(built, tmp_path):
     r = airbench.train(**SMALL, save=str(tmp_path / 'm'))
     m = footprint.measure(r['saved'], 'cpu', threads=1, batch=4, warmup=1, timed=3)
-    for k in ('p50_ms', 'p95_ms', 'images_per_s', 'peak_rss_mb'):
+    for k in ('p50_ms', 'p95_ms', 'images_per_s', 'peak_rss_mb', 'rss_mb'):
         assert k in m and m[k] >= 0
 
 
 def test_classes_reject_larger_and_leaky_models():
-    ref = {'params_stored': 1000, 'bytes': 4100, 'runs': {'cpu1_b1': {'peak_rss_mb': 100.0}}}
-    row = lambda p, b, rss: {'params_stored': p, 'bytes': b, 'runs': {'cpu1_b1': {'peak_rss_mb': rss}}}
+    ref = {'params_stored': 1000, 'bytes': 4100, 'runs': {'cpu1_b1': {'rss_mb': 100.0}}}
+    row = lambda p, b, rss: {'params_stored': p, 'bytes': b, 'runs': {'cpu1_b1': {'rss_mb': rss}}}
     assert footprint.classify(row(900, 3700, 100.0), ref) == 'S'
     assert footprint.classify(row(900, 3700, 150.0), ref) == 'P'           # more memory: parameter-matched only
     assert footprint.classify(row(2000, 8100, 90.0), ref) == 'out'         # more parameters

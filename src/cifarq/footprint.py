@@ -120,6 +120,14 @@ class _Null:
         return torch.full((len(images), 10), 0.1, device=self.device).add_(0 * x.mean()).cpu().numpy()
 
 
+def _vmrss_mb() -> float:
+    """This process's resident memory now (Linux ``/proc``), MB."""
+    for line in Path('/proc/self/status').read_text().splitlines():
+        if line.startswith('VmRSS:'):
+            return round(int(line.split()[1]) / 1024, 1)
+    return 0.0
+
+
 def _measure(directory: str, device: str, threads: int, batch: int, warmup: int, timed: int) -> dict:
     """One setting, in this (fresh) process: the process's peak memory (RSS, and GPU allocations), and latency or
     throughput. ``directory`` ``null`` measures the baseline (``_Null``), which ``measure`` subtracts."""
@@ -152,7 +160,8 @@ def _measure(directory: str, device: str, threads: int, batch: int, warmup: int,
     out = {'device': device, 'threads': threads or torch.get_num_threads(), 'batch': batch,
            'p50_ms': round(1e3 * float(np.median(times)), 3), 'p95_ms': round(1e3 * float(np.percentile(times, 95)), 3),
            'images_per_s': round(batch / float(np.median(times)), 1),
-           'peak_rss_mb': round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)}
+           'peak_rss_mb': round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1),
+           'rss_mb': _vmrss_mb()}
     if dev.type == 'cuda':
         out['peak_gpu_mb'] = round(torch.cuda.max_memory_allocated(dev) / 2 ** 20, 1)
         out['gpu'] = torch.cuda.get_device_name(dev)
@@ -170,8 +179,9 @@ def measure(directory, device='cpu', threads: int = 0, batch: int = 1, warmup: i
     minus the null's (the same imports, inputs and CUDA context: what the model itself adds), latency the model's."""
     r = _fresh(directory, device, threads, batch, warmup, timed)
     null = _fresh('null', device, threads, batch, 2, 3)
-    r['peak_rss_total_mb'] = r['peak_rss_mb']
+    r['peak_rss_total_mb'], r['rss_total_mb'] = r['peak_rss_mb'], r['rss_mb']
     r['peak_rss_mb'] = round(max(0.0, r['peak_rss_mb'] - null['peak_rss_mb']), 1)
+    r['rss_mb'] = round(max(0.0, r['rss_mb'] - null['rss_mb']), 1)       # (resident after the timed loop: what it holds)
     if 'peak_gpu_mb' in r:
         r['peak_gpu_total_mb'] = r['peak_gpu_mb']
         r['peak_gpu_mb'] = round(max(0.0, r['peak_gpu_mb'] - null.get('peak_gpu_mb', 0.0)), 1)
@@ -205,7 +215,7 @@ def classify(row: dict, ref: dict, param_cap: int | None = None) -> str:
         base = ref['runs'].get(name)
         if base is None:
             continue
-        for k in ('peak_rss_mb', 'peak_gpu_mb'):
+        for k in ('rss_mb', 'peak_gpu_mb'):                  # (resident CPU memory and peak GPU memory: E0.1-a3)
             if k in r and k in base and r[k] > 1.05 * base[k] + 1.0:   # (+1 MB: the counters' granularity)
                 return 'P'
     return 'S'
