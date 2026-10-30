@@ -1,6 +1,6 @@
 # Status: 2026-10-30-equivariant-small
 
-Updated 2026-10-30. Phase: **M2 done; user chose "methods first": E* = 100, M3 running on the G4; fallback to the six-view target if M3+M4 don't lift one view to 95.7 %.**
+Updated 2026-10-30. Phase: **M3 done (H1: flips beat plain + 2 views at short schedules, tie at 100 epochs; D4 and BlurPool rejected). M4 screens running on the G4.**
 
 ## Objective
 
@@ -27,11 +27,24 @@ finalist at 95.00 ± 0.08 % (one view) / 95.45 ± 0.17 % (6 views), 1.94 M, 40 e
 
 ## Jobs
 
-- **M3-h1-curves** (G4, frozen at cbc3152; 54 trainings via `grid.py`, log `scratchpad/m3.log`; VM up 10:28, balance
-  857.62 before). Provenance note: the working tree was on `eqsm/O4-muon` (6e35fe4) from 10:32:49 to 10:33:35; jobs
-  that started in that window carried that branch's code, which only adds `optimizer='muon'` (unused by M3).
-- `eqsm/O4-muon` (6e35fe4): Muon for the filters, tested, unmerged until its M4 screen.
-- Lesson applied: the queue sends `src/` when a job starts, so code is developed in a worktree while jobs run.
+- **M4-screens** (G4, frozen at fa4b708; 18 trainings + M3's PW control repair, 9; `scratchpad/m4.log`).
+  Balance before 850.57. Session spend so far 11.8 units (862.40 -> 850.57).
+
+## M3 readout (val, 3 seeds 1-3; 1 / 2 / 6 views)
+
+| Arm | 20 epochs | 40 epochs | 100 epochs |
+|---|---|---|---|
+| P plain 1.91 M, 177 M MACs | 93.41 / 94.24 / 94.27 | 94.50 / 95.11 / 95.31 | 95.27 / 95.68 / 95.89 |
+| **D1 flips g2-3, 1.94 M, 237 M** | **94.35** / 94.64 / 94.72 | **95.27** / 95.54 / 95.69 | **95.62** / 95.79 / **96.02** |
+| D1B + BlurPool | 94.17 / 94.45 / 94.55 | 94.99 / 95.29 / 95.39 | 95.44 / 95.63 / 95.79 |
+| D4a flips + quarter turns g3, 260 M | 93.53 / 94.11 / 94.29 | 94.55 / 95.03 / 95.25 | 94.99 / 95.39 / 95.49 |
+| D4b flips + quarter turns g2-3, 597 M | 93.48 / 93.91 / 94.09 | 94.83 / 95.20 / 95.38 | 95.23 / 95.51 / 95.75 |
+
+- H1: D1 at 1 view vs plain at 2 views (354 M MACs): +0.11, +0.16, −0.06 pp at 20, 40, 100 epochs. Equivariance buys
+  the flip view's accuracy at a third fewer MACs, with a margin at short schedules that closes by 100 epochs, the
+  shape PLAN §1 predicted and the tie Adly 2026 predicts at equal test-time compute.
+- Rotations hurt (a misaligned group on CIFAR); BlurPool hurts. The matched-MAC control (PW) was invalid (pruned by
+  the inherited 2 M cap) and is repaired in the M4 grid.
 
 ## M2 readout (val, 2 seeds; finalist D1 D1 1.94 M / plain twin 1.91 M)
 
