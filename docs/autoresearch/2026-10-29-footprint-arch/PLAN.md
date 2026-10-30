@@ -57,8 +57,10 @@ method track runs alongside the searches and has its own budget share (§7).
 
 Changing the validation or test split or the accuracy function. Publishing anywhere (hub, airbench repository)
 without the user's explicit approval. Quantization as the route to the parameter or byte limits (fp32 or bf16
-weights only; int8 is an optional appendix). Training-time records in seconds: epochs are the budget here, the
-conversion to seconds on a named card is reported once at the end for Goal A.
+weights only; int8 is an optional appendix). Training time in seconds, as a goal or a gate: the session is about
+the accuracy targets within their constraints (parameters, footprint, and Goal A's 40-epoch cap), and seconds are
+only recorded (the user, 2026-10-29); the conversion to seconds on a named card is reported once at the end for
+Goal A, as information.
 
 ### Reference points (local, measured)
 
