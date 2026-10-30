@@ -73,8 +73,7 @@ PLAN §9 pivot (2026-10-30): stronger teachers (P1), method screens at matched p
   queued after MT1: ens3 at p2-t158's kd settings and at w 0.5 T 4, seeds 1-3 (`scratchpad/p1.sh`).
 - **P2 MT1** flip-equivariance at p1-t84's recipe and matched parameters (fe1 128/128/144 1.68 M; fe2 128/96/144
   1.76 M), seeds 1-3, running (`scratchpad/p2.sh`); compared with p1-t84's retrain.
-- **M3-pyramidnet**, G4 50 min (job via `scratchpad/m3p.log`): 16 trials at 06:00, best the warm point 95.28 %.
-- Session spend 12.0 units before the PyramidNet study.
+- **M3-pyramidnet** done: Rejected (best = its warm point, 95.28 % val; 23 trials). Session spend 22.06 units (balance 862.40).
 - Watcher over all of them.
 
 ## Standing instructions
