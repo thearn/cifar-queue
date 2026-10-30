@@ -62,7 +62,12 @@ def main():
     t0 = time.time()
     # (stall_min: the queue flags a job whose log is quiet this long; airbench.train logs every epoch)
     hints = {'minutes': 30, 'stall_min': 10, **({'gpu_mb': a.gpu_mb} if a.gpu_mb else {})}
-    with executor(a.stage, targets, data=[dataset_file()], **hints) as ex:
+    # a distillation teacher (one directory, or several separated by commas) goes to a VM with the data, by its
+    # absolute path, which is the path the job is given
+    teachers = [str(Path(t.strip()).resolve()) for t in str(params.get('kd_teacher') or '').split(',') if t.strip()]
+    if teachers:
+        params['kd_teacher'] = ','.join(teachers)
+    with executor(a.stage, targets, data=[dataset_file(), *teachers], **hints) as ex:
         futures = {s: ex.submit(fn, data=str(dataset_file()), **({'save': 'model'} if a.save else {}), **{**params, 'seed': s})
                    for s in a.seeds}
         for s, f in futures.items():
