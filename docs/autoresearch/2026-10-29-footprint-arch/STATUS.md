@@ -40,8 +40,9 @@ account's two VM slots.
 
 ## Baselines
 
-- **B0** (local footprint reference): `results/g4-best.json`; 3,709,882 trainable params; 94.57 % test (3 seeds, G4).
-  E0.3 re-measures on the 4060.
+- **B0** (local footprint reference): `results/g4-best.json`; 3,709,882 trainable params. On the 4060 (E0.3, 5 seeds):
+  **94.60 ± 0.11 % test**, 94.68 ± 0.15 % validation (G4, 3 seeds: 94.57 %). Saved network (seed 4, median
+  validation): `results/models/B0`.
 - **airbench96**: 96.05 % (paper) / 96.03 % (script header, 400 runs) at 37 epochs, 9.92 M. E1.1.
 - **Shake-Shake 26 2x32d**: 96.45 %; 97.5 ± 0.1 % with AutoAugment (verified). E6.1.
 
@@ -57,7 +58,7 @@ account's two VM slots.
 
 ## Jobs
 
-- E0.3 (B0 × 5 seeds) on the local 4060, started 2026-10-29 ~21:25 through the queue (`pipeline/tools/seeds.py E0.3 ...`; log in the session's scratchpad). `SOLVEQ_SESSION=fparch`.
+- E0.1: the bench on B0, 5 repeats, local (quiet GPU needed: nothing else is submitted until it ends).
 
 ## Standing instruction
 
