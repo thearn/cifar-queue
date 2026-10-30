@@ -60,7 +60,8 @@ def main():
     from common import stage_targets
     targets = stage_targets(a.stage, a.targets)
     t0 = time.time()
-    hints = {'minutes': 30, **({'gpu_mb': a.gpu_mb} if a.gpu_mb else {})}
+    # (stall_min: the queue flags a job whose log is quiet this long; airbench.train logs every epoch)
+    hints = {'minutes': 30, 'stall_min': 10, **({'gpu_mb': a.gpu_mb} if a.gpu_mb else {})}
     with executor(a.stage, targets, data=[dataset_file()], **hints) as ex:
         futures = {s: ex.submit(fn, data=str(dataset_file()), **({'save': 'model'} if a.save else {}), **{**params, 'seed': s})
                    for s in a.seeds}

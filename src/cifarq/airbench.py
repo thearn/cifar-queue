@@ -403,6 +403,9 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
             mean_loss = (loss_sum / max(1, i + 1) / (bs if h['optimizer'] == 'sgd' else 1)).item()
             st['history'].append({'epoch': epoch + 1, 'loss': round(mean_loss, 4),
                                   'val_acc': round(accuracy(x_val, y_val, 0)[0], 4), 'seconds': round(time.time() - t0, 1)})
+            # (a line an epoch: the job's log grows while it trains, so the queue's stall check means something)
+            print(f"epoch {epoch + 1}/{n_epochs}: loss {mean_loss:.4f} val {st['history'][-1]['val_acc']:.4f} "
+                  f"{st['history'][-1]['seconds']:.0f} s", flush=True)
             if not math.isfinite(mean_loss):
                 return False
             if st['step'] < total and stop_here(round(100 * st['step'] / total), st['history'][-1]['val_acc']):
