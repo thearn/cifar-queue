@@ -159,7 +159,8 @@ class FieldSE(nn.Module):
 
     def forward(self, x):
         n, kc = x.shape[:2]
-        z = x.float().mean((2, 3)).view(n, self.k, kc // self.k).mean(1)
+        # (pooled in fp32, then in the layers' own precision: under airbench's fp16 the Linear weights are fp16)
+        z = x.float().mean((2, 3)).view(n, self.k, kc // self.k).mean(1).to(self.fc1.weight.dtype)
         s = torch.sigmoid(self.fc2(F.gelu(self.fc1(z)))).to(x.dtype)
         return x * s.repeat(1, self.k).view(n, kc, 1, 1)
 

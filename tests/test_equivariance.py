@@ -102,3 +102,12 @@ def test_muon_trains_and_orthogonalises(built):
     assert sv.max() < 1.5 and sv.min() > 0.3                # (Muon's iteration: singular values near 1, not exactly)
     r = airbench.train(widths=(16, 16, 16), depth=3, flip_eq=2, batch_size=64, epochs=1, test='sealed', optimizer='muon')
     assert 0.1 < r['val_acc'] <= 1
+
+
+def test_levers_run_in_fp16_on_the_gpu(built):
+    import pytest
+    if not torch.cuda.is_available():
+        pytest.skip('needs a GPU (the fp16 path)')
+    for kw in ({'se': 4}, {'srf': True}, {'optimizer': 'muon'}, {'eq_group': 'd4'}, {'blur_pool': True}):
+        r = airbench.train(widths=(16, 16, 16), depth=3, flip_eq=2, batch_size=64, epochs=1, test='sealed', **kw)
+        assert 0 <= r['val_acc'] <= 1, kw
