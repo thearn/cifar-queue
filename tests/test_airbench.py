@@ -32,7 +32,8 @@ def test_unknown_hyperparameters_are_refused(built):
         airbench.train(epochs=1, width=16)
 
 
-@pytest.mark.parametrize('extra', [{'depth': 3, 'cutout': 4, 'translate': 4}, {'train_on': 'train+val', 'tta_level': 1}])
+@pytest.mark.parametrize('extra', [{'depth': 3, 'cutout': 4, 'translate': 4}, {'train_on': 'train+val', 'tta_level': 1},
+                                   {'tta_level': 3, 'flip_eq': 2}])
 def test_saved_network_predicts_what_training_measured(built, tmp_path, extra):
     r = airbench.train(**SMALL, **extra, save=str(tmp_path / 'model'))
     probs = airbench.Predictor(r['saved']).predict(built['x_test'])

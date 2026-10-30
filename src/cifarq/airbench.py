@@ -164,13 +164,17 @@ def whiten_init(layer, x, eps: float):
 
 
 def tta_logits(net, x, level: int):
-    """Logits of normalised images ``x`` averaged over ``level``'s views (0: 1 view, 1: 2, 2: 6)."""
+    """Logits of normalised images ``x`` averaged over ``level``'s views (0: 1 view, 1: 2, 2: 6; 3: 18, every shift of
+    -2, 0 or 2 pixels each way, mirrored: the session's P2, inference compute being uncapped)."""
     import torch.nn.functional as F
     mirror = lambda v: 0.5 * net(v) + 0.5 * net(v.flip(-1))
     if level == 0:
         return net(x)
     if level == 1:
         return mirror(x)
+    if level >= 3:
+        padded = F.pad(x, (2,) * 4, 'reflect')
+        return sum(mirror(padded[:, :, dy:dy + 32, dx:dx + 32]) for dy in (0, 2, 4) for dx in (0, 2, 4)) / 9
     padded = F.pad(x, (1,) * 4, 'reflect')
     shifted = 0.5 * (mirror(padded[:, :, 0:32, 0:32]) + mirror(padded[:, :, 2:34, 2:34]))
     return 0.5 * mirror(x) + 0.5 * shifted
@@ -475,7 +479,7 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
         return {'val_acc': history[-1]['val_acc'], 'pruned': True, 'progress': round(100 * step / total), **common}
     val, val_share = accuracy(x_val, y_val, h['tta_level'], h['tta_gate'])
     test, test_share = accuracy(x_test, y_test, h['tta_level'], h['tta_gate'])
-    views = {0: 1, 1: 2, 2: 6}[h['tta_level']]
+    views = {0: 1, 1: 2, 2: 6, 3: 18}[h['tta_level']]
     out = {'val_acc': round(val, 4), 'val_acc_notta': round(accuracy(x_val, y_val, 0)[0], 4), 'test_acc': round(test, 4),
            'test_acc_notta': round(accuracy(x_test, y_test, 0)[0], 4),
            'views_per_image': round(1 + views * test_share, 3) if h['tta_gate'] > 0 and h['tta_level'] else views, **common}
