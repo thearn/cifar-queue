@@ -46,6 +46,11 @@ session `2026-10-29-footprint-arch`'s integration branch, which carries all the 
     120 or 150. Frozen once chosen; every later comparison uses it.
   - *If 150 does not reach 95.7 % at one view*, the target is revised with the user before M3 (candidates: six
     views allowed, or ≤ 3 M parameters).
+  - **Decided 2026-10-30 after M2 (the user: "methods first, then decide"):** the finalist's one view plateaued at
+    ~95.6 % from 80 epochs, so the gate failed. **E\* = 100** (the plateau's onset; six views cross 96 % there).
+    M3 and M4 run on the one-view target. If they do not lift one view to ≥ 95.7 % at 100 epochs, the target falls
+    back to **≥ 96.0 % at ≤ 2 M parameters, ≤ 100 epochs, six views** (already ~96.08 % val on 2 seeds) without
+    asking again.
 
 ### Method goal: equivariance as the substitute for augmentation and test-time augmentation at matched inference cost
 

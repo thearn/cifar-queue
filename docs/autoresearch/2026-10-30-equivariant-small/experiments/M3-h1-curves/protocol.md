@@ -1,5 +1,6 @@
 # M3-h1-curves: equivariance against test-time augmentation at matched parameters and MACs
-DRAFT: freezes at M2's readout (E\* filled in) on `eqsm/main` with M1 part 2 merged (`val_acc_by_views`).
+Frozen: 2026-10-30, commit cbc3152 (eqsm/main, M1 part 2 merged). E\* = 100 (user decision after M2). Grid:
+`results/autoresearch/eqsm/m3-grid.json`, run by `pipeline/tools/grid.py M3-h1-curves --base .../finalist-d1d1.json`.
 Dataset dataset-6e01ae0c4036.
 
 - **Hypothesis and mechanism (H1, PLAN §1):** building the symmetry into the network buys at one forward pass what
@@ -25,7 +26,7 @@ Dataset dataset-6e01ae0c4036.
   - matched inference cost: each equivariant arm at 1 view against P at 2 views (354 M) and at 6 views (1,061 M);
   - matched MACs per view, parameters free: D1 at 1 view against PW at 1 view;
   - the flip TTA's residual value on each equivariant arm (its 2-view minus 1-view).
-- **Budgets:** 20, 40 and E\* epochs. **Seeds:** 1-3 (paired across arms). **Test:** sealed.
+- **Budgets:** 20, 40 and 100 epochs (100 submitted first). **Seeds:** 1-3 (paired across arms). **Test:** sealed.
 - **Gates:** Promising for an arm at ≥ +0.15 pp at 1 view over P at 2 views at E\*; H1 null if no arm reaches it at any
   budget (PLAN §6). Tolerance from M2's seed spread.
 - **Compute:** `colab:cifar-g4`, two jobs at a time (the card's default slots; one VM). 6 arms × 3 budgets × 3 seeds

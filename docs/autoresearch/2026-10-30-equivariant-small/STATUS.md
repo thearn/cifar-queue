@@ -1,6 +1,6 @@
 # Status: 2026-10-30-equivariant-small
 
-Updated 2026-10-30. Phase: **M2 done: gate hit (no budget reaches 95.7 % at one view). Waiting for the user's target revision.**
+Updated 2026-10-30. Phase: **M2 done; user chose "methods first": E* = 100, M3 running on the G4; fallback to the six-view target if M3+M4 don't lift one view to 95.7 %.**
 
 ## Objective
 
