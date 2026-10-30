@@ -43,6 +43,7 @@ def main():
     ap.add_argument('--seeds', type=int, nargs='+', default=[0])
     ap.add_argument('--save', action='store_true', help="keep each seed's network (in its job's directory)")
     ap.add_argument('--stage', default='train', help="configs/compute.toml's stage for the hints (default: train)")
+    ap.add_argument('--gpu-mb', type=int, help="each job's peak GPU memory for the queue's admission (7000 on the 4060: alone)")
     targets_arg(ap)
     a = ap.parse_args()
     params, fn = {}, a.fn
@@ -59,7 +60,8 @@ def main():
     from common import stage_targets
     targets = stage_targets(a.stage, a.targets)
     t0 = time.time()
-    with executor(a.stage, targets, data=[dataset_file()], minutes=30) as ex:
+    hints = {'minutes': 30, **({'gpu_mb': a.gpu_mb} if a.gpu_mb else {})}
+    with executor(a.stage, targets, data=[dataset_file()], **hints) as ex:
         futures = {s: ex.submit(fn, data=str(dataset_file()), **({'save': 'model'} if a.save else {}), **{**params, 'seed': s})
                    for s in a.seeds}
         for s, f in futures.items():
