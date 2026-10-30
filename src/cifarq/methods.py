@@ -14,6 +14,9 @@
 - MT6 ``gated_logits``: one view first; the full test-time augmentation only for images whose top-two probability
   margin is under ``gate``; the share that needed it, for the average views counted in the footprint.
 (MT2, trunk-and-tails averaging, and MT5, weight-tied depth, live in ``airbench.train`` and ``airbench.model``.)
+
+Session 2026-10-30-equivariant-small adds ``P4MConv`` and ``GroupMaxPool`` (Q1: the flips and quarter turns, D4) and
+``MaxBlurPool`` (Q2: anti-aliased downsampling).
 """
 from __future__ import annotations
 
@@ -54,6 +57,91 @@ class PairMaxPool(nn.Module):
     def forward(self, x):
         n, c2 = x.shape[:2]
         return x.amax((2, 3)).view(n, 2, c2 // 2).amax(1)
+
+
+FlipConv.order = 2
+
+
+def d4_transform(x, g: int):
+    """The D4 element ``g`` (0-7: ``g % 4`` quarter turns after a horizontal flip when ``g >= 4``) applied to the last
+    two (spatial) dimensions."""
+    return torch.rot90(x.flip(-1) if g >= 4 else x, g % 4, dims=(-2, -1))
+
+
+def _d4_tables():
+    """(composition table mul[a][b] = a∘b, inverses), read from the action on a generic 3x3 array, so the convention is
+    whatever ``d4_transform`` does."""
+    x = torch.arange(9.).view(3, 3)
+    images = [d4_transform(x, g) for g in range(8)]
+    find = lambda y: next(c for c in range(8) if torch.equal(images[c], y))
+    mul = [[find(d4_transform(d4_transform(x, b), a)) for b in range(8)] for a in range(8)]
+    inv = [next(b for b in range(8) if mul[a][b] == 0) for a in range(8)]
+    return mul, inv
+
+
+class P4MConv(nn.Module):
+    """A 3x3 convolution equivariant to the 8 flips and quarter turns (p4m, the group D4 acting on the grid): features
+    come in fields of 8 (group-major: channel block g is the response to the g-transformed pattern). ``lift`` takes
+    ``cin`` plain channels to ``cout`` fields (out block g = conv with g(W)); otherwise ``cin`` fields to ``cout``
+    fields, out block g, in block k with kernel g(W[g^-1 k]). Stored weights are 1/8 of the expanded convolution's
+    (8 cin x 8 cout); the expanded kernel is what runs (and what ``footprint.count_macs`` counts). The session's Q1."""
+
+    order = 8
+
+    def __init__(self, cin: int, cout: int, lift: bool = False):
+        super().__init__()
+        self.lift, self.cin, self.cout = lift, cin, cout
+        mul, inv = _d4_tables()
+        self.register_buffer('perm', torch.tensor([[mul[inv[g]][k] for k in range(8)] for g in range(8)]), persistent=False)
+        self.weight = nn.Parameter(torch.zeros(cout, cin * (1 if lift else 8), 3, 3))
+        with torch.no_grad():
+            nn.init.kaiming_uniform_(self.weight, a=5 ** 0.5)
+            if lift:
+                nn.init.dirac_(self.weight[:min(cout, cin)])
+            else:
+                w5 = self.weight.view(cout, 8, cin, 3, 3)
+                w5[:, 1:].mul_(0.1)                          # (the cross-element terms small at the start)
+                nn.init.dirac_(w5[:min(cout, cin), 0])       # (identity element: a partial identity per block)
+
+    def full(self):
+        if self.lift:
+            return torch.cat([d4_transform(self.weight, g) for g in range(8)], 0)
+        w5 = self.weight.view(self.cout, 8, self.cin, 3, 3)
+        return torch.cat([d4_transform(w5[:, self.perm[g]].reshape(self.cout, 8 * self.cin, 3, 3), g)
+                          for g in range(8)], 0)
+
+    def forward(self, x):
+        return F.conv2d(x, self.full().to(x.dtype), padding=1)
+
+
+class GroupMaxPool(nn.Module):
+    """(N, kC, H, W) -> (N, C): the global maximum of each channel, then the maximum over each field of ``k``
+    (``k=2``: ``PairMaxPool``)."""
+
+    def __init__(self, k: int = 2):
+        super().__init__()
+        self.k = k
+
+    def forward(self, x):
+        n, kc = x.shape[:2]
+        return x.amax((2, 3)).view(n, self.k, kc // self.k).amax(1)
+
+
+class MaxBlurPool(nn.Module):
+    """Anti-aliased downsampling by 2 (Zhang 2019, MaxBlurPool): a dense max (3x3, stride 1, centred) then a fixed
+    [1,3,3,1] x [1,3,3,1] / 64 blur at stride 2 (reflect-padded). Both are symmetric about the grid's centre on
+    even-sized maps, so flips and quarter turns commute with it exactly, as with ``MaxPool2d(2)``. The session's Q2."""
+
+    def __init__(self):
+        super().__init__()
+        f = torch.tensor([1., 3., 3., 1.])
+        self.register_buffer('filt', (f[:, None] * f[None, :] / 64).view(1, 1, 4, 4), persistent=False)
+
+    def forward(self, x):
+        x = F.max_pool2d(x, 3, 1, 1)
+        c = x.shape[1]
+        return F.conv2d(F.pad(x, (1, 1, 1, 1), mode='reflect'), self.filt.to(x.dtype).expand(c, 1, 4, 4), stride=2,
+                        groups=c)
 
 
 def _convs_in_order(net):
