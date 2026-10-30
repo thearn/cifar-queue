@@ -64,18 +64,12 @@ account's two VM slots.
 
 ## Jobs
 
-PLAN §9 pivot (2026-10-30): stronger teachers (P1), method screens at matched parameters (P2), one combined study.
-
-- **Baseline (airbench top 5, seeds 1-3, done but p2-t30):** best p2-t158 (128/160/192, 1.91 M, kd from one
-  airbench96 at w 0.12): 95.40 % val, 95.41 ± 0.11 % test. p1-t157 95.35 / 95.25; p1-t236 95.25 / 95.10; p1-t84 (the
-  search's best) 95.17 / 95.06. Winner's curse 0.2-0.5 pp. Under the 95.5 % readout: the pivot stands.
-- **P1 teacher:** the ensemble of the three airbench96 45k models reaches 96.30 % val (singles 95.78-96.08). Screened at
-  p2-t158: Rejected (w 0.12: 95.25 / 95.10; w 0.5 T 4: 95.31 / 95.32; baseline 95.40 / 95.41).
-- **P2 MT1** flip-equivariance at p1-t84's recipe and matched parameters: fe2 (128/96/144, 1.76 M) Promising,
-  95.49 / 95.22 (+0.32 val, +0.16 test, +0.58 no-TTA test vs p1-t84); fe1 no change. Running (`scratchpad/p3.sh`):
-  fe2 at p2-t158's recipe, 128/112/144 (1.94 M), with and without ens3 kd.
-- **M3-pyramidnet** done: Rejected (best = its warm point, 95.28 % val; 23 trials). Session spend 22.06 units (balance 862.40).
-- Watcher over all of them: `watch_session.py cifar` (screens launched without `SOLVEQ_SESSION=fparch` carry the `cifar/` label; set it on later launches).
+None. **Session closed 2026-10-30** by PLAN §9's stop rule and the user's choice ("go with your recommendation": no
+further units on Target A). The result is in `RESULT.md`:
+- Finalist fe2-t158 (flip-equivariant airbench, 1.94 M) Validated against B0: 95.45 ± 0.17 % test at 6 views (+0.85
+  pp, class P); 95.00 ± 0.08 % at 1 view (+0.40 pp, class S, faster than B0 on every runtime row).
+- Target A not met (95.45 < 96.00). Goal B not started.
+- Spend: 22.06 of 50 units.
 
 ## Standing instructions
 
@@ -86,11 +80,8 @@ PLAN §9 pivot (2026-10-30): stronger teachers (P1), method screens at matched p
 
 ## Next action, in order
 
-1. E0.1's GPU rows and repeatability on a quiet machine, with E0.3 (B0 × 5 seeds, local) first since the bench
-   needs B0's saved network.
-2. E1.2 (airbench94: 2 × 50k + 3 × 45k, local, ~1 min each), then E1.1 (airbench96: 1 × 50k + 3 × 45k, ~5 min each).
-3. M2 screens on the 4060 (A1-A9 at 40 epochs) while the first G4 calibration + airbench-family search runs.
-4. Method screens (MT1-MT6 on A1 at 20 epochs, 3 paired seeds, local) once E1.2 fixes the A1 recipe. MT7 (the
-   MAC-capped joint search) needs a cap in the airbench space: not built yet.
-5. R1 teachers: shipping a teacher directory to a VM job as data (the `--kd` path) is untested; test it with the first
-   distillation search.
+Nothing running. If the session is reopened, the options are:
+- Target A with a teacher-guided search on the G4, flip equivariance in the space (~10 units; tenths of a point
+  expected, not the 0.55 pp needed).
+- Goal B's replication (local, days).
+- Merging solve-queue's `colab-rates` and `gpu-reservations` branches into its main.
