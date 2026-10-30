@@ -64,13 +64,15 @@ account's two VM slots.
 
 ## Jobs
 
-- **M3-airbench** (`experiments/M3-airbench/protocol.md`): phase 1 done (job 00002-on_vm, 40 min, ~6.5 units, GPU
-  busy 99 %): best 95.64 % val / 95.07 % test, depth 3 128/128/192 (1.65 M); saturated in its space, best at the w1
-  and batch edges. Phase 2 running (rev b: w1 to 192, batch 2048, distillation from airbench96 45k seed 0, warm from
-  phase 1's top 4, rungs [50] keep 2/3; 35 min), log `scratchpad/m3b.log`.
-- M2 attempt 3 (`m2c`), local, one at a time: ConvMixer p2 SGD lr 2 (93.74 % val) and AdamW+amp (93.94 %) done;
-  DenseNet-BC-100 running (~335 s an epoch); PyramidNet-110 and ConvMixer p1 queued.
-- Watcher `watch_session.py fparch --stall-min 20` over both.
+- **M3-pyramidnet** (`experiments/M3-pyramidnet/protocol.md`, branch `fparch/M3-pyramidnet`): G4, 50 min,
+  report-only pruner, concurrency calibrated; log `scratchpad/m3p.log`.
+- **M3-airbench top 5 x seeds 1-3** (winner's curse control; the searches trained seed 0), local, sequential: p1-t84,
+  p2-t158 (kd), p1-t157, p1-t236, p2-t30 (kd); configs in `results/autoresearch/M3-airbench-top5/`.
+- M3-airbench: phase 1 best 95.64 % val (depth 3, 128/128/192, 1.65 M); phase 2 (distillation, wider w1/batch) best
+  95.60 %: the family is saturated near 95.6 % single-seed val. Session spend 12.0 units at 05:25 (balance 872.46).
+- M2 closed locally: A4 PyramidNet 95.18 % val (to M3), A5 DenseNet stopped at epoch 38 (93.74 % no TTA), ConvMixer p1
+  not run (too slow on the 4060).
+- Watcher over all of them.
 
 ## Standing instructions
 
