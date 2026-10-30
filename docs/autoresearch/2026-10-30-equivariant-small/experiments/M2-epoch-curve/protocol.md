@@ -4,12 +4,12 @@ Dataset dataset-6e01ae0c4036.
 
 - **Hypothesis and mechanism:** the last session's gap (95.00 % one view, 95.45 % six views at 40 epochs) is
   epoch-limited; validation at one view rises monotonically with epochs under the airbench schedule (triangular
-  lr, Lookahead) and crosses 96.0 % somewhere in 60-160 epochs.
+  lr, Lookahead) and reaches 95.7-96.0 % somewhere in 80-150 epochs.
 - **Failure or uncertainty addressed:** the epoch cap E* in PLAN §1 is not yet known; the target could be unreachable
   at 2 M at any short schedule.
 - **Decision it informs:** the session's epoch cap E* (PLAN §1: the smallest of 80/100/120/150 whose one-view
-  validation mean reaches 95.7 %; if 150 does not, the target is revised with the user); whether equivariance's one-view advantage over plain + TTA persists at longer
-  schedules (a first look at H1 before M3).
+  validation mean reaches 95.7 %; if 150 does not, the target is revised with the user); whether
+  equivariance's one-view advantage over plain + TTA persists at longer schedules (a first look at H1 before M3).
 - **Baseline / candidate; the variable changed:** candidate = fe2-t158 (D1 D1, 128/112/144, 1,944,024 parameters,
   recipe `results/autoresearch/P2/fe2-t158.json` with its one-teacher KD); baseline = the plain depth-3 airbench at
   128/160/192 (1,912,824; p2-t158's recipe, the matched-parameter twin). Variable: `epochs` ∈ {40, 80, 100, 120,

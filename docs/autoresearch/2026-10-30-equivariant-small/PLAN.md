@@ -199,11 +199,11 @@ Ensemble teachers, tails, > 6 views (last session's nulls).
   (hand-rolled like `FlipConv`, by `rot90` expansion of 3×3 kernels, channels_last and fp16 safe; escnn is not
   used, see `literature.md`); BlurPool; SRF convolution; the Fourier block; SE; proxy filtering; the MAC-count test
   for expanded layers; the matched-MAC widening helper. Each with CPU tests; the regression gate run once at the end.
-- **M2 The epoch curve (G4, ~2 units):** the finalist (D1 D1) and its plain matched-parameter twin at 40, 60, 80,
-  100 and 160 epochs, 2 seeds each, validation at one view and at 6 views. **Readout:** the epoch budget at which the
-  finalist's one-view validation crosses 96.0 %, if any. If it does not cross by 160 at 6 views, the target is
+- **M2 The epoch curve (G4, ~3 units):** the finalist (D1 D1) and its plain matched-parameter twin at 40, 80, 100,
+  120 and 150 epochs, 2 seeds each, validation at one view and at 6 views. **Readout:** E\*, the smallest of
+  80/100/120/150 where the finalist's one-view validation mean reaches 95.7 % (§1). If 150 does not, the target is
   revised with the user before M3 (candidates: 6 views allowed, or ≤ 3 M parameters).
-- **M3 H1 curves (G4, ~4 units):** Q1's three equivariance patterns and Q2, against plain + 2 views and plain + 6
+- **M3 H1 curves (G4, ~6 units):** Q1's three equivariance patterns and Q2, against plain + 2 views and plain + 6
   views, at matched parameters and at matched MACs, at 20, 40 and E\* epochs, 3 seeds. **Readout:** the method
   result stands or is null. If no equivariant arm beats plain + TTA at matched MACs by ≥ 0.15 pp at any budget, H1
   is reported null and the target rests on §5.2-5.3 plus the recipe; the session continues either way.
