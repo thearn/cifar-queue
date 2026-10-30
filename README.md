@@ -48,7 +48,7 @@ The layout is that of [ml-queue-template](../ml-queue-template) (`.copier-answer
 | `55_tune_on_vm.py` | mode 2: a whole Optuna (or Ray Tune) search inside one job on one card, its trials as processes there; it uses the card's stored concurrency or measures and stores it, stops trials early through the study (`--pruner rungs`, chosen from this model's curves), and checkpoints the study as it runs. On a G4 the fastest and best way to search here (`docs/PLAN-mode2.md`) |
 | `60_champion.py` | the best trial trained again over seeds, the median seed by validation kept |
 | `70_publish.py` | the code at HEAD, the champion's network and the model card (`pipeline/card.md`) to the hub; `--dry-run` first |
-| `tools/` | `watch.py` (follow a search), `rung_check.py` (choose early stopping), `conformal_check.py`, `pbt_g4.py` |
+| `tools/` | `watch.py` (follow a search), `rung_check.py` (choose early stopping), `conformal_check.py`, `pbt_g4.py`; for the autoresearch sessions below, `seeds.py` and `grid.py` (configurations over seeds as jobs), `fit_rungs.py`, `footprint_bench.py` (parameters, bytes, MACs, latency and memory against a reference), `compare_b0.py` (the win rule), `open_test.py` (one logged look at the test set), `watch_session.py` |
 
 ```bash
 uv venv ~/.venvs/cifarq --python 3.12      # a uv or conda Python: a VM cannot rebuild the system one
@@ -99,8 +99,37 @@ gain most of their accuracy late; rungs chosen by replaying 161 complete curves 
 configurations than no pruning in the same time. Population-based training on the best configuration gave nothing
 more for runs this short.
 
+## Results (2026-10-29/30): two autoresearch sessions on small, fast networks
+
+Two agent-run campaigns (plans, ledgers and write-ups in `docs/autoresearch/`) searched for a better network than the
+ResNet-9 above at a smaller inference footprint, using airbench's architecture and recipe (`src/cifarq/airbench.py`)
+with flip-equivariant convolutions and other levers behind flags (`src/cifarq/methods.py`). All numbers are on the
+same 45000/5000 split, 5 seeds, test opened once for the final models in the second session.
+
+| Model | Params | Epochs | Views | Test | MACs/image |
+|---|---|---|---|---|---|
+| ResNet-9 (B0, the search's best above) | 3.71 M | 30 | 2 | 94.60 +- 0.11 % | 450 M |
+| airbench96, replicated (96.01 % on all 50000 images, paper 96.03 %) | 9.92 M | 37 | 6 | 95.87 +- 0.04 % | 2712 M |
+| Flip-equivariant airbench, 40 epochs (`2026-10-29-footprint-arch`) | 1.94 M | 40 | 1 / 6 | 95.00 +- 0.08 % / 95.45 +- 0.17 % | 237 M / 1424 M |
+| The same, 100 epochs (`2026-10-30-equivariant-small`) | 1.94 M | 100 | 1 / 6 | 95.40 +- 0.20 % / **95.87 +- 0.17 %** | 237 M / 1424 M |
+
+At one view the 1.94 M network beats B0 by 0.4-0.8 points and is smaller and faster on every footprint axis (2.0 ms
+against 2.6 ms at batch 1 on the 4060, 32k against 14k images a second at batch 1024). At 100 epochs it matches
+airbench96 on this split at a fifth of the parameters, though airbench96 stays about a point ahead on CIFAR-10.1.
+The goal of 96 % at 2 M parameters was not reached (95.43 % at one view, 95.87 % at six). The method finding: at one
+forward pass, flip equivariance buys what the plain network gets from its mirrored test-time view, ahead of it at
+20-40 epochs and tied at 100 with a third fewer MACs, and 0.3-0.4 points ahead of a plain network with the same MACs.
+Adding 90-degree rotations hurt, as did anti-aliased pooling, squeeze-and-excitation, proxy data filtering, Muon and
+ensemble distillation. Training here is not bit-reproducible (cuDNN chooses its algorithms per run), so identical runs
+differ by about 0.2 points, which is the floor for any effect claimed above.
+
+The published model on the hub is still the ResNet-9.
+
 ## References
 
 - D. Page, "How to train your ResNet" (Myrtle.ai, 2018-2019); [DAWNBench CIFAR-10](https://dawn.cs.stanford.edu/cifar10-training)
 - [Lambda: ResNet9 to 94 % in 100 s on one Turing GPU](https://lambda.ai/blog/resnet9-train-to-94-cifar10-accuracy-in-100-seconds)
-- K. Jordan, [94 % on CIFAR-10 in 3.29 seconds on a single GPU](https://arxiv.org/abs/2404.00498) (airbench, 2024)
+- K. Jordan, [94 % on CIFAR-10 in 3.29 seconds on a single GPU](https://arxiv.org/abs/2404.00498) (airbench, 2024); [cifar10-airbench](https://github.com/KellerJordan/cifar10-airbench)
+- T. Cohen, M. Welling, [Group equivariant convolutional networks](https://arxiv.org/abs/1602.07576) (2016); M. Weiler, G. Cesa, [General E(2)-equivariant steerable CNNs](https://arxiv.org/abs/1911.08251) (2019)
+- A. Adly, [Measuring the symmetry-data exchange rate](https://arxiv.org/abs/2606.01090) (2026)
+- B. Recht et al., [Do CIFAR-10 classifiers generalize to CIFAR-10?](https://arxiv.org/abs/1806.00451) (CIFAR-10.1, 2018)
