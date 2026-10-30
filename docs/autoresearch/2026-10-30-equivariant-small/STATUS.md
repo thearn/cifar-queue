@@ -1,6 +1,6 @@
 # Status: 2026-10-30-equivariant-small
 
-Updated 2026-10-30. Phase: **M4 done: structured receptive fields reach 95.73 % at one view (Inconclusive +0.11 pp); one-view target kept. M5 search next.**
+Updated 2026-10-30. Phase: **M5 done: the search saturated at ~95.7 % one-view val (no trial beat the finalist). M6 retrains of the top candidates next.**
 
 ## Objective
 
@@ -27,7 +27,8 @@ finalist at 95.00 ± 0.08 % (one view) / 95.45 ± 0.17 % (6 views), 1.94 M, 40 e
 
 ## Jobs
 
-None. Session spend 23.45 units (balance 838.95).
+- None running. **Session spend ≈ 43 units** of 75: 25.2 to 12:25 by the balance (only our VM up), then ~17.6 for M5 by our
+  VM's hours at 10.05/h (a second session's G4, `snapclip-g4`, has been up since ~12:25, so the balance no longer measures us).
 
 ## M4 readout (val at 1 / 6 views, 3 seeds, paired with M3's D1-e100: 95.62 / 96.02)
 
