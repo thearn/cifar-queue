@@ -70,7 +70,11 @@ def main():
             runs = []
             for s in a.seeds:
                 params, f = futures[(g['name'], s)]
-                r = {k: v for k, v in f.result().items() if k != 'hyperparameters'}
+                try:
+                    r = {k: v for k, v in f.result().items() if k != 'hyperparameters'}
+                except Exception as error:                   # noqa: BLE001 - one failed run is recorded, not fatal
+                    r = {'failed': repr(error)}
+                    print(f"{g['name']} seed {s}: FAILED {error!r}", flush=True)
                 runs.append({**r, 'seed': s, 'job': str(f.job)})
                 print(f"{g['name']} seed {s}: val {r.get('val_acc')} views {r.get('val_acc_by_views')} "
                       f"{r.get('train_seconds')} s", flush=True)
