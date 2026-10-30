@@ -11,7 +11,7 @@ Frozen: 2026-10-29, fparch/main at the commit adding this file.
     label smoothing 0.1, warmup 0.1 then linear to 0, translate 4, no cutout
 - Configurations (stored params, MACs per view):
   A1 airbench 64/256/256 d2 (1,972,792; 118 M): r94, r96
-  A2 airbench 64/160/224 d3 (1,866,552): r96; 64/192/192 d3 (1,857,336): r96
+  A2 airbench 64/160/224 d3 (1,871,480): r96; 64/192/192 d3 (1,861,944): r96
   A3 resnet9 width 35 (1,968,655; 114 M): r96
   A4 pyramidnet-110 alpha 48 (1,772,706; 404 M): r96
   A5 densenet-bc 100 k12 (769,162; 288 M): r96
