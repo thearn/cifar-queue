@@ -85,8 +85,29 @@ def pyramidnet_space(trial, cap: int = 2_000_000, max_epochs: float = 40, kd: st
     return {**p, **recipe(trial, max_epochs, kd), 'param_cap': cap}
 
 
+def eqairbench_space(trial, cap: int = 2_000_000, max_epochs: float = 100, kd: str = '') -> dict:
+    """Session 2026-10-30-equivariant-small, M5: the flip-equivariant airbench (depth 3; the last 1 or 2 groups
+    equivariant, M3's winner), structured receptive fields on or off (M4's one non-negative lever), widths under the
+    cap, and the recipe around the finalist's at a fixed ``max_epochs`` (E*). Scored at one view (``tta_level`` 0;
+    ``val_acc_by_views`` still reports 2 and 6). Distillation from ``kd`` (one airbench96) with its weight free."""
+    c, s = trial.suggest_categorical, trial.suggest_float
+    p = {'arch': 'airbench', 'depth': 3, 'flip_eq': c('flip_eq', [1, 2]), 'srf': c('srf', [False, True]),
+         'widths': (c('w1', list(range(96, 184, 8))), c('w2', list(range(96, 200, 8))), c('w3', list(range(112, 232, 8)))),
+         'epochs': float(max_epochs), 'batch_size': c('batch_size', [512, 1024]), 'lr': s('lr', 4.0, 14.0, log=True),
+         'momentum': s('momentum', 0.7, 0.9), 'weight_decay': s('weight_decay', 0.004, 0.015, log=True),
+         'bias_scaler': s('bias_scaler', 24.0, 96.0, log=True), 'label_smoothing': s('label_smoothing', 0.1, 0.3),
+         'warmup_frac': s('warmup_frac', 0.05, 0.25), 'final_lr_frac': s('final_lr_frac', 0.0, 0.08),
+         'bn_momentum': s('bn_momentum', 0.035, 0.12, log=True), 'translate': c('translate', [2, 3, 4]),
+         'cutout': c('cutout', [8, 12, 16]), 'whiten_bias_epochs': 3,
+         'scaling_factor': s('scaling_factor', 1 / 25, 1 / 8, log=True), 'tta_level': 0, 'lookahead': True,
+         'augment': 'none', 'param_cap': cap}
+    if kd:
+        p.update(kd_teacher=kd, kd_weight=s('kd_weight', 0.0, 0.4), kd_temp=s('kd_temp', 2.0, 8.0, log=True))
+    return p
+
+
 SPACES = {'airbench': airbench_space, 'resnet9': resnet9_space, 'convmixer': convmixer_space,
-          'pyramidnet': pyramidnet_space}
+          'pyramidnet': pyramidnet_space, 'eqairbench': eqairbench_space}
 
 # airbench94's recipe (1.97 M, widths 64/256/256) as a point of the airbench space, at the cap's epochs
 _AB94 = {'depth': 2, 'w1': 64, 'w2': 256, 'w3': 256, 'epochs': 9.9, 'batch_size': 1024, 'lr': 11.5, 'momentum': 0.85,
@@ -104,7 +125,12 @@ WARM = {'airbench': [{**_R96, 'depth': 3, 'w2': 192, 'w3': 192}, {**_R96, 'depth
                        'kernel': 5, 'patch': 2, 'epochs': 30.0, 'augment': 'randaugment', 'augment_m': 12}],
         'pyramidnet': [{**{k: v for k, v in _R96.items() if k not in ('depth', 'w1', 'w2', 'w3')}, 'bottleneck': False,
                         'pn_n': 18, 'alpha': 48, 'batch_size': 256}]}
+# M5's starting points: the finalist (D1 D1, 128/112/144) and its SRF variant (160/136/176), M4's best, same recipe
+_FIN = {'batch_size': 1024, 'lr': 9.3713, 'momentum': 0.777184, 'weight_decay': 0.007254, 'bias_scaler': 57.61766, 'label_smoothing': 0.167498, 'warmup_frac': 0.148382, 'final_lr_frac': 0.018644, 'bn_momentum': 0.055161, 'translate': 4, 'cutout': 12, 'scaling_factor': 0.053902, 'kd_weight': 0.119, 'kd_temp': 5.528057}
+WARM['eqairbench'] = [{**_FIN, 'flip_eq': 2, 'srf': False, 'w1': 128, 'w2': 112, 'w3': 144},
+                      {**_FIN, 'flip_eq': 2, 'srf': True, 'w1': 160, 'w2': 136, 'w3': 176}]
 CALIBRATE = {'airbench': {'epochs': 2, 'widths': (64, 256, 256)},
              'resnet9': {'epochs': 2, 'arch': 'resnet9', 'arch_kw': {'width': 32}},
              'convmixer': {'epochs': 1, 'arch': 'convmixer', 'arch_kw': {'dim': 256, 'depth': 8, 'kernel': 5, 'patch': 2}},
-             'pyramidnet': {'epochs': 1, 'arch': 'pyramidnet', 'arch_kw': {'depth': 110, 'alpha': 48}, 'batch_size': 256}}
+             'pyramidnet': {'epochs': 1, 'arch': 'pyramidnet', 'arch_kw': {'depth': 110, 'alpha': 48}, 'batch_size': 256},
+             'eqairbench': {'epochs': 2, 'widths': (128, 112, 144), 'depth': 3, 'flip_eq': 2}}
