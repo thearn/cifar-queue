@@ -4,10 +4,10 @@ Updated 2026-10-29 21:10. Phase: **M0 closed; M1 infrastructure built and tested
 Goals (PLAN.md §1): Goal A, 96 % at ≤ 2 M stored parameters in ≤ 40 epochs (replicate airbench96 first); Goal B
 (stretch), beat Shake-Shake 26 2x32d + AutoAugment (97.5 %) at ≤ 2.9 M; the method track MT1-MT7 alongside.
 
-## Blocked on
+## Resources
 
-Both GPUs busy with the af2 project at the session's start (the local 4060 by a process outside the queue,
-`ll-cal/run.py`; a G4 VM `af2-g4`). The user will say when they are free. Nothing of this session is running.
+The local 4060 freed at ~21:20 (af2's `ll-cal/run.py` ended); af2's G4 VM `af2-g4` still holds one of the
+account's two VM slots.
 
 ## Built (CPU-tested: `pytest` 55 pass, 2 skipped as before; 36 of them new; B0's paths unchanged)
 
@@ -25,10 +25,9 @@ Both GPUs busy with the af2 project at the session's start (the local 4060 by a 
 
 ## Deviations from the plan (recorded, by the agent's judgement)
 
-- **No branch, no commits.** The working tree carries the user's uncommitted `layout` restructure, which the campaign
-  code depends on; committing it on a new branch would move it out of their working tree when they switch back.
-  Provenance instead: `git stash create` snapshots kept as `refs/autoresearch/<experiment>` (exact code, nothing
-  stashed or changed), and the results records' commit + dirty flag.
+- **Branches and commits** (the user, 2026-10-29): the restructure and the session's start committed on `layout`
+  (5e3440a, 4eb77ee); the session continues on `fparch/main` with a branch per code-changing experiment
+  (PLAN.md §3). Earlier: no commits, provenance by `git stash create` refs only.
 - **No account-wide `solveq budget 50`.** The limit is account-wide and af2 had already spent 114 units that day; a
   50-unit limit would stop af2's work. The session's spend is tracked per executor (`solveq colab hours`) from these
   starting values: cifar-g4 17.9, cifar-a100 8.8, cifar-a100x 1.2 units (all from earlier sessions). New executors
@@ -58,7 +57,7 @@ Both GPUs busy with the af2 project at the session's start (the local 4060 by a 
 
 ## Jobs
 
-None. `SOLVEQ_SESSION=fparch` for the session's jobs.
+- E0.3 (B0 × 5 seeds) on the local 4060, started 2026-10-29 ~21:25 through the queue (`pipeline/tools/seeds.py E0.3 ...`; log in the session's scratchpad). `SOLVEQ_SESSION=fparch`.
 
 ## Next action (when the GPUs are free), in order
 

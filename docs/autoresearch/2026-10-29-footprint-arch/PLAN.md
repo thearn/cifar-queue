@@ -178,8 +178,19 @@ ablations above.
 **Protected:**
 - `evaluate.accuracy`, the dataset stages and split, `data/manifests/*`
 - Earlier `results/`, `docs/RESULTS.md`'s past entries, and the published model
-- The user's uncommitted restructure: campaign code is committed on a branch from it (`autoresearch/footprint-arch`)
-  without rewriting their changes
+- `layout` and `master`: the session never commits to them after 2026-10-29's two commits on `layout` (the
+  restructure, 5e3440a; the session's start, 4eb77ee), made at the user's request
+
+**Branches (from 2026-10-29, at the user's request):**
+- `fparch/main`: the session's integration branch, from 4eb77ee. Promoted code, and the session's records (plan,
+  status, ledger, protocols), are committed here.
+- `fparch/<experiment-id>` (e.g. `fparch/MT1-flip-eq`, `fparch/A6-convmixer-screen`): one branch per experiment that
+  changes code, from `fparch/main`, its protocol committed first. When the experiment ends: `--no-ff` merged into
+  `fparch/main` if Promising or Validated (the merge message names the ledger row); kept unmerged, never deleted, if
+  Rejected, Inconclusive or Invalid, so the attempted code stays reachable. Experiments that only run existing code
+  (seeds, searches) need no branch: their protocol and ledger row are committed on `fparch/main`.
+- Every run records the commit it ran (``provenance``), and `pipeline/tools/seeds.py` also keeps a ref
+  `refs/autoresearch/<experiment>` of the exact tree (useful when a run starts with uncommitted changes).
 
 **Regression gate for every code change touching training:** `pytest` (CPU, synthetic data) plus B0 at seed 0,
 4 epochs, on the 4060, matching the pre-change run's validation accuracy exactly (bf16 on the same card and software
