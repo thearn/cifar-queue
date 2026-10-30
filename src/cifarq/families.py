@@ -4,6 +4,8 @@ pruned at step 0 by the trainer, so the sampler learns the boundary) plus the sh
 ``max_epochs``, batch, SGD's decoupled learning rate, momentum and weight decay, label smoothing, schedule, bias
 scaler, batch-norm momentum, translation, cutout, policy augmentation, test-time views, logit scale.
 
+(M3-airbench phase 1 found its best at w1 128 and batch 1024, the tops of their ranges: both widened for phase 2.)
+
 ``SPACES[family](trial, cap, max_epochs)`` gives ``airbench.train``'s arguments; ``WARM[family]`` the points each study
 starts from (as ``trial.params``); ``CALIBRATE[family]`` a short training to time concurrency with.
 """
@@ -14,7 +16,7 @@ TRAIN = 'cifarq.airbench:train'
 
 def recipe(trial, max_epochs: float = 40, kd: str = '') -> dict:
     s, c = trial.suggest_float, trial.suggest_categorical
-    p = {'epochs': s('epochs', 8.0, max_epochs), 'batch_size': c('batch_size', [256, 512, 1024]),
+    p = {'epochs': s('epochs', 20.0, max_epochs), 'batch_size': c('batch_size', [256, 512, 1024, 2048]),
          'lr': s('lr', 2.0, 30.0, log=True), 'momentum': s('momentum', 0.7, 0.95),
          'weight_decay': s('weight_decay', 0.003, 0.05, log=True), 'bias_scaler': s('bias_scaler', 4.0, 128.0, log=True),
          'label_smoothing': s('label_smoothing', 0.0, 0.3), 'warmup_frac': s('warmup_frac', 0.02, 0.3),
@@ -36,7 +38,7 @@ def recipe(trial, max_epochs: float = 40, kd: str = '') -> dict:
 def airbench_space(trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
     c = trial.suggest_categorical
     p = {'arch': 'airbench', 'depth': c('depth', [2, 3]),
-         'widths': (c('w1', [32, 48, 64, 80, 96, 112, 128]), c('w2', [96, 128, 160, 192, 224, 256, 288, 320, 384]),
+         'widths': (c('w1', [32, 48, 64, 80, 96, 112, 128, 160, 192]), c('w2', [96, 128, 160, 192, 224, 256, 288, 320, 384]),
                     c('w3', [96, 128, 160, 192, 224, 256, 288, 320, 384, 448, 512]))}
     return {**p, **recipe(trial, max_epochs, kd), 'param_cap': cap}
 
@@ -55,19 +57,36 @@ def convmixer_space(trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str
     return {**p, **recipe(trial, max_epochs, kd), 'param_cap': cap}
 
 
-SPACES = {'airbench': airbench_space, 'resnet9': resnet9_space, 'convmixer': convmixer_space}
+def pyramidnet_space(trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
+    """PyramidNet (M2: depth 110, alpha 48, 1.77 M, 95.18 % val untuned): blocks a stage (depth 6n + 2, or 9n + 2
+    with bottlenecks), the widening alpha."""
+    c = trial.suggest_categorical
+    bottleneck, n = c('bottleneck', [False, True]), trial.suggest_int('pn_n', 3, 21)
+    p = {'arch': 'pyramidnet', 'arch_kw': {'depth': (9 if bottleneck else 6) * n + 2, 'bottleneck': bottleneck,
+                                           'alpha': c('alpha', [24, 32, 48, 64, 84, 100, 128, 160])}}
+    return {**p, **recipe(trial, max_epochs, kd), 'param_cap': cap}
+
+
+SPACES = {'airbench': airbench_space, 'resnet9': resnet9_space, 'convmixer': convmixer_space,
+          'pyramidnet': pyramidnet_space}
 
 # airbench94's recipe (1.97 M, widths 64/256/256) as a point of the airbench space, at the cap's epochs
 _AB94 = {'depth': 2, 'w1': 64, 'w2': 256, 'w3': 256, 'epochs': 9.9, 'batch_size': 1024, 'lr': 11.5, 'momentum': 0.85,
          'weight_decay': 0.0153, 'bias_scaler': 64.0, 'label_smoothing': 0.2, 'warmup_frac': 0.23, 'final_lr_frac': 0.07,
          'bn_momentum': 0.4, 'translate': 2, 'cutout': 0, 'whiten_bias_epochs': 3, 'scaling_factor': 1 / 9, 'tta_level': 2,
          'lookahead': True, 'augment': 'none'}
-WARM = {'airbench': [_AB94, {**_AB94, 'epochs': 30.0, 'cutout': 12, 'translate': 4, 'lr': 9.0, 'weight_decay': 0.012,
-                             'warmup_frac': 0.1, 'final_lr_frac': 0.0, 'bn_momentum': 0.1}],
+# airbench96's recipe at the cap's 40 epochs (M2: depth 3 at 64/192/192 the best screen, 95.48 % val; 64/160/224
+# 95.34 %; depth 2 at 64/256/256 94.96 %)
+_R96 = {**_AB94, 'epochs': 40.0, 'cutout': 12, 'translate': 4, 'lr': 9.0, 'weight_decay': 0.012, 'warmup_frac': 0.1,
+        'final_lr_frac': 0.0, 'bn_momentum': 0.1}
+WARM = {'airbench': [{**_R96, 'depth': 3, 'w2': 192, 'w3': 192}, {**_R96, 'depth': 3, 'w2': 160, 'w3': 224}, _R96],
         'resnet9': [{**{k: v for k, v in _AB94.items() if k not in ('depth', 'w1', 'w2', 'w3')}, 'width': 32,
                      'activation': 'gelu', 'epochs': 30.0}],
         'convmixer': [{**{k: v for k, v in _AB94.items() if k not in ('depth', 'w1', 'w2', 'w3')}, 'dim': 256, 'cm_depth': 8,
-                       'kernel': 5, 'patch': 2, 'epochs': 30.0, 'augment': 'randaugment', 'augment_m': 12}]}
+                       'kernel': 5, 'patch': 2, 'epochs': 30.0, 'augment': 'randaugment', 'augment_m': 12}],
+        'pyramidnet': [{**{k: v for k, v in _R96.items() if k not in ('depth', 'w1', 'w2', 'w3')}, 'bottleneck': False,
+                        'pn_n': 18, 'alpha': 48, 'batch_size': 256}]}
 CALIBRATE = {'airbench': {'epochs': 2, 'widths': (64, 256, 256)},
              'resnet9': {'epochs': 2, 'arch': 'resnet9', 'arch_kw': {'width': 32}},
-             'convmixer': {'epochs': 1, 'arch': 'convmixer', 'arch_kw': {'dim': 256, 'depth': 8, 'kernel': 5, 'patch': 2}}}
+             'convmixer': {'epochs': 1, 'arch': 'convmixer', 'arch_kw': {'dim': 256, 'depth': 8, 'kernel': 5, 'patch': 2}},
+             'pyramidnet': {'epochs': 1, 'arch': 'pyramidnet', 'arch_kw': {'depth': 110, 'alpha': 48}, 'batch_size': 256}}

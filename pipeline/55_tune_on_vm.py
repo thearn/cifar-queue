@@ -43,6 +43,10 @@ if __name__ == '__main__':
     ap.add_argument('--max-epochs', type=float, default=40, help='the epochs range ends here (families)')
     ap.add_argument('--kd', default='', help="a teacher's saved directory (families: distillation enters the space)")
     ap.add_argument('--resume-from', help='a study database to continue (instead of --resume\'s latest)')
+    ap.add_argument('--warm-from', help="an earlier study's database: its best --warm-top trials are the starting points")
+    ap.add_argument('--warm-top', type=int, default=4)
+    ap.add_argument('--warm-set', type=json.loads, default={}, help='JSON: values set in every starting point (with '
+                    '--kd: {"kd": true, "kd_weight": 0.5, "kd_temp": 4.0})')
     a = ap.parse_args()
     slot_key = 'cifar-trial' if a.family == 'b0' else f'cifar-{a.family}'
     target = a.target or next(iter(stage_targets('tune_on_vm')))
@@ -75,6 +79,14 @@ if __name__ == '__main__':
         shutil.copy(dbs[-1], frozen)
         resume = {'resume_from': str(frozen)}
         print(f'resuming from {dbs[-1]} (as {frozen})', flush=True)
+    warm_points = None
+    if a.warm_from:
+        import optuna
+        storage = f'sqlite:///{Path(a.warm_from).resolve()}'
+        old = optuna.load_study(study_name=optuna.study.get_all_study_names(storage)[-1], storage=storage)
+        best = sorted((t for t in old.trials if t.state.name == 'COMPLETE'), key=lambda t: -t.value)[:a.warm_top]
+        warm_points = [{**t.params, **a.warm_set} for t in best]
+        print(f'starting from {a.warm_from} trials {[t.number for t in best]}', flush=True)
     t0 = time.time()
     data = str(dataset_file())
     hints = {'minutes': (a.minutes or 240) + 15, 'watch': ['progress.json', 'study.db'],
@@ -83,7 +95,8 @@ if __name__ == '__main__':
     if a.gpu_mb or target == 'local':
         hints['gpu_mb'] = a.gpu_mb or 7000
     # the whole GPU for the search: its own trials share it, nothing else should
-    with executor('tune_on_vm', {target: 1}, data=[dataset_file(), *resume.values()], **hints) as ex:
+    # (a teacher's directory is sent like the data, once per VM, at the same absolute path)
+    with executor('tune_on_vm', {target: 1}, data=[dataset_file(), *resume.values(), *([str(Path(a.kd).resolve())] if a.kd else [])], **hints) as ex:
         if a.driver == 'ray':
             if a.pruner in ('median', 'rungs'):
                 raise SystemExit('the Ray driver takes asha, hyperband or none')
@@ -94,7 +107,8 @@ if __name__ == '__main__':
             future = ex.submit('cifarq.tune:on_vm', n_trials=a.trials, data=data, pruner=a.pruner,
                                minutes=a.minutes, concurrent=a.concurrent, pruner_settings=a.pruner_settings,
                                schedule_free=not a.no_schedule_free, warm=not a.cold, seed=a.seed, startup=a.startup,
-                               family=a.family, cap=a.cap, max_epochs=a.max_epochs, kd=a.kd, **resume)
+                               family=a.family, cap=a.cap, max_epochs=a.max_epochs, kd=a.kd and str(Path(a.kd).resolve()),
+                               warm_points=warm_points, **resume)
         print(f'job {future.job}', flush=True)
         seen = None
         while not future.done():

@@ -57,16 +57,22 @@ account's two VM slots.
 
 ## Budget
 
-- Colab cap 50 units for the session (tracked per executor, see above); spent 0. Local unlimited.
+- Colab cap 50 units for the session (tracked per executor, see above); spent 0 before M3. Local unlimited.
+- 2026-10-30 ~03:45, `colab usage`: balance 884.46 units, burn 10.05 units/h with one VM up (cifar-g4, ours; no other
+  session's VM live). The queue's card record says 8.90 for a G4, so `solveq colab hours` understates G4 spend by
+  ~13 %. Session spend is tracked as the balance's fall from 884.46 (no other VM up meanwhile), the hours table a check.
 
 ## Jobs
 
-- E1.1-45k (airbench96, 3 seeds, saved), then M2 attempt 2 (`m2b`: the screens a1 lost, one at a time with
-  `--gpu-mb 7000`), local. Watcher running.
-- M2 attempt 1 lost: A4 and A5 (killed after ~60 min thrashing: both at batch 1024 in 7.5 of 8 GB, GPU ~20 % busy,
-  flagged stalled by the queue), A6-p1, A6-p2-r96, A7 (removed from the queue before starting), A2-64-192-192 and A9
-  (never submitted: concurrent runners raced for a job directory, FileExistsError), A6-p2-adamw (diverged to 10 %:
-  AdamW on fp16 weights; rerun with fp32 weights).
+- **M3-pyramidnet** (`experiments/M3-pyramidnet/protocol.md`, branch `fparch/M3-pyramidnet`): G4, 50 min,
+  report-only pruner, concurrency calibrated; log `scratchpad/m3p.log`.
+- **M3-airbench top 5 x seeds 1-3** (winner's curse control; the searches trained seed 0), local, sequential: p1-t84,
+  p2-t158 (kd), p1-t157, p1-t236, p2-t30 (kd); configs in `results/autoresearch/M3-airbench-top5/`.
+- M3-airbench: phase 1 best 95.64 % val (depth 3, 128/128/192, 1.65 M); phase 2 (distillation, wider w1/batch) best
+  95.60 %: the family is saturated near 95.6 % single-seed val. Session spend 12.0 units at 05:25 (balance 872.46).
+- M2 closed locally: A4 PyramidNet 95.18 % val (to M3), A5 DenseNet stopped at epoch 38 (93.74 % no TTA), ConvMixer p1
+  not run (too slow on the 4060).
+- Watcher over all of them.
 
 ## Standing instructions
 
