@@ -64,9 +64,10 @@ account's two VM slots.
 
 ## Jobs
 
-- **M3-airbench** (`experiments/M3-airbench/protocol.md`), G4 job `results/jobs/tune_on_vm/00002-on_vm`: phase 1,
-  report-only pruner, 40 minutes, concurrency calibrated in the job. The user cleared VM use on 2026-10-30. cifar-g4
-  stood at 17.9 units before it.
+- **M3-airbench** (`experiments/M3-airbench/protocol.md`): phase 1 done (job 00002-on_vm, 40 min, ~6.5 units, GPU
+  busy 99 %): best 95.64 % val / 95.07 % test, depth 3 128/128/192 (1.65 M); saturated in its space, best at the w1
+  and batch edges. Phase 2 running (rev b: w1 to 192, batch 2048, distillation from airbench96 45k seed 0, warm from
+  phase 1's top 4, rungs [50] keep 2/3; 35 min), log `scratchpad/m3b.log`.
 - M2 attempt 3 (`m2c`), local, one at a time: ConvMixer p2 SGD lr 2 (93.74 % val) and AdamW+amp (93.94 %) done;
   DenseNet-BC-100 running (~335 s an epoch); PyramidNet-110 and ConvMixer p1 queued.
 - Watcher `watch_session.py fparch --stall-min 20` over both.
