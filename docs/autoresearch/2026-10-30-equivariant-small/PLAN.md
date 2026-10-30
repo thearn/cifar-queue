@@ -134,10 +134,30 @@ two-seed objective, the equivariant space, a multi-objective study), `pipeline/t
 revision needs a new attempt id and a repeat of B0's row), the last session's records, `results/` from before this
 session, `layout` and `master`.
 
-**Branches:** `eqsm/main` from `3c4eb93` is the integration branch; `eqsm/<experiment-id>` per code-changing
-experiment, `--no-ff` merged if Promising or Validated, kept unmerged otherwise; snapshot refs
-`refs/autoresearch/<exp>` from `seeds.py`. **Every launch sets `SOLVEQ_SESSION=eqsm`** so the watcher and `solveq
-brief` see the jobs (two of the last session's screens ran under the wrong label).
+**Git (agreed with the user 2026-10-30; the autoresearch skill now carries the same rules):**
+- **`eqsm/main`**, from `fparch/main` at `3c4eb93`, is the integration branch. The records (plan, status, ledger,
+  protocols, results notes) are committed **only here**, never on a side branch (last session some ledger rows
+  reached the integration branch only through merges).
+- **Branches are per unit of new code, not per experiment,** and hold as many commits as the work needs.
+  - `eqsm/M1`: all of M1's infrastructure, one commit per piece (sealed test, two-seed objective, p4m layer,
+    BlurPool, structured receptive fields, Fourier block, SE, proxy filtering, the MAC-count test, the matched-MAC
+    helper), every lever behind a flag whose default keeps earlier runs bit-identical. Merged `--no-ff` once, after
+    the CPU tests and the regression gate.
+  - Screens, the epoch curve and searches that run merged code get **no branch**; their protocols and ledger rows go
+    straight onto `eqsm/main`.
+  - A branch only when an experiment needs new code mid-session (a repair, Q3's separable layer): its protocol first,
+    then the code; `--no-ff` merged if Promising or Validated, left unmerged as the record if not.
+- **Exact trees:** every run records its commit and dirty state; `seeds.py` keeps `refs/autoresearch/<exp>` from
+  `git stash create` at submission.
+- **Artifacts outside git** (`results/`: jobs, models, study databases) by path; the final model's weight and config
+  sha256s go in `RESULT.md` and the ledger.
+- **At completion, when the user confirms the session is done:** delete the merged branches and the dead ones,
+  keeping each unmerged tip as `refs/autoresearch/archive/<branch>` with its SHA in the ledger, so the findings and
+  the code behind them stay reachable without cluttering `git branch`. Merging into `master`, pushing and publishing
+  only with the user's say-so.
+
+**Every launch sets `SOLVEQ_SESSION=eqsm`** so the watcher and `solveq brief` see the jobs (two of the last session's
+screens ran under the wrong label).
 
 **Regression gate for code touching training:** `pytest` on the CPU, then the finalist's recipe at seed 1 for 4
 epochs on the 4060 matching the pre-change validation accuracy exactly.
