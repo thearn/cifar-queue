@@ -61,11 +61,19 @@ account's two VM slots.
 
 ## Jobs
 
-- E1.2 (airbench94: 2 seeds on 50k, then 3 on 45k/5k, saved), local 4060, started ~21:45.
+- E1.1-45k (airbench96, 3 seeds, saved), then M2 attempt 2 (`m2b`: the screens a1 lost, one at a time with
+  `--gpu-mb 7000`), local. Watcher running.
+- M2 attempt 1 lost: A4 and A5 (killed after ~60 min thrashing: both at batch 1024 in 7.5 of 8 GB, GPU ~20 % busy,
+  flagged stalled by the queue), A6-p1, A6-p2-r96, A7 (removed from the queue before starting), A2-64-192-192 and A9
+  (never submitted: concurrent runners raced for a job directory, FileExistsError), A6-p2-adamw (diverged to 10 %:
+  AdamW on fp16 weights; rerun with fp32 weights).
 
-## Standing instruction
+## Standing instructions
 
-Push notification to the user when Target A or B is Validated (PLAN.md §7).
+- Push notification to the user when Target A or B is Validated (PLAN.md §7).
+- Whenever the session has queue jobs, `pipeline/tools/watch_session.py fparch` runs in the background (stall 15 min,
+  idle 20 min), so a failure, a stall or a dry queue wakes the agent without the user asking (the user, 2026-10-29,
+  after two jobs thrashed the 4060's memory for an hour unnoticed). Heavy jobs on the 4060 go with `--gpu-mb 7000`.
 
 ## Next action, in order
 
