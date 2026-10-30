@@ -1,6 +1,6 @@
 # Status: 2026-10-30-equivariant-small
 
-Updated 2026-10-30. Phase: **M6 stage 1 done: all candidates within 0.15 pp (1 view 95.41-95.55, 6 views 95.80-95.97); finalists T39 (1 view) and FIN (6 views); stage 2 (seeds 4-5) running.**
+Updated 2026-10-30. Phase: **M6 done: test opened once. Neither target met (best 1 view 95.43 %, 6 views 95.87 %). The finalists match airbench96 on 45k at 1/5 of its parameters. Bench, CIFAR-10.1 and the write-up next.**
 
 ## Objective
 
@@ -19,6 +19,7 @@ finalist at 95.00 ± 0.08 % (one view) / 95.45 ± 0.17 % (6 views), 1.94 M, 40 e
 
 - Test: reported for every run of the last session (regression evidence, not a hold-out). **Sealed from this
   session's first run** (`test='sealed'`, M1); opened once per final model in M6. Looks taken this session: none.
+- Test looks this session: one per finalist, 15:08 (T39) and 15:12 (FIN), `data/holdout/test_looks.jsonl`.
 - CIFAR-10.1: three looks on 2026-10-30 (finalist 6 views, 1 view, B0), `data/holdout/looks.jsonl`. This session: none.
 
 ## Budget
