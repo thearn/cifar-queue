@@ -74,7 +74,7 @@ PLAN §9 pivot (2026-10-30): stronger teachers (P1), method screens at matched p
 - **P2 MT1** flip-equivariance at p1-t84's recipe and matched parameters (fe1 128/128/144 1.68 M; fe2 128/96/144
   1.76 M), seeds 1-3, running (`scratchpad/p2.sh`); compared with p1-t84's retrain.
 - **M3-pyramidnet** done: Rejected (best = its warm point, 95.28 % val; 23 trials). Session spend 22.06 units (balance 862.40).
-- Watcher over all of them.
+- Watcher over all of them: `watch_session.py cifar` (screens launched without `SOLVEQ_SESSION=fparch` carry the `cifar/` label; set it on later launches).
 
 ## Standing instructions
 
