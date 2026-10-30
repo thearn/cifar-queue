@@ -183,7 +183,7 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
           data: str | None = None, resume_from: str | None = None, pruner: str = 'none', concurrent: int | None = None,
           minutes: float | None = None, turns: bool = True, pruner_settings: dict | None = None,
           schedule_free: bool = True, warm: bool = True, startup: int = 16, family: str = 'b0', cap: int = 2_000_000,
-          max_epochs: float = 40, kd: str = '', warm_points: list | None = None) -> dict:
+          max_epochs: float = 40, kd: str = '', warm_points: list | None = None, seeds: int = 1) -> dict:
     """Mode 2, run as one queue job on a VM: how many trainings the GPU runs at once with gain (``calibrate``, on
     2-epoch width-32 runs), then Optuna over the whole ``space`` with that many trials in flight as processes on the GPU, the study in
     ``study.db`` in the job's directory (brought back with the job). ``resume_from``: a study database of a run that
@@ -198,7 +198,8 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
     one's training. ``family``: ``b0`` (this space, ``train.train``, Page's recipe first) or a family of
     ``cifarq.families`` (``airbench.train``, its space under ``cap`` parameters and ``max_epochs``, its warm points;
     ``kd`` a teacher directory for distillation). ``warm_points``: the points to start from instead of the family's
-    (an earlier study's best). The best trial, the calibration and the timing."""
+    (an earlier study's best). ``seeds`` 2: each trial is ``families.train_two_seeds`` (seed 0 pruned by the study,
+    survivors again at seed 1, the mean as the value; test sealed). The best trial, the calibration and the timing."""
     import functools
     import optuna
     import shutil
@@ -212,7 +213,7 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
         cal = {'epochs': 2, 'width': 32}
     else:
         from . import families
-        fn, warm_points, cal = families.TRAIN, families.WARM[family], families.CALIBRATE[family]
+        fn, warm_points, cal = (families.TRAIN_TWO_SEEDS if seeds == 2 else families.TRAIN), families.WARM[family], families.CALIBRATE[family]
         space_fn = functools.partial(families.SPACES[family], cap=cap, max_epochs=max_epochs, kd=kd)
     warm_points = warm_points if given is None else given
     if concurrent:

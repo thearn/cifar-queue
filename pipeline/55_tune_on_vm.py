@@ -45,6 +45,8 @@ if __name__ == '__main__':
     ap.add_argument('--resume-from', help='a study database to continue (instead of --resume\'s latest)')
     ap.add_argument('--warm-from', help="an earlier study's database: its best --warm-top trials are the starting points")
     ap.add_argument('--warm-top', type=int, default=4)
+    ap.add_argument('--seeds', type=int, default=1, choices=(1, 2), help='2: each trial on seeds 0 and 1 (seed 1 for '
+                    "survivors of seed 0's early stopping), the mean as its value, test sealed")
     ap.add_argument('--warm-set', type=json.loads, default={}, help='JSON: values set in every starting point (with '
                     '--kd: {"kd": true, "kd_weight": 0.5, "kd_temp": 4.0})')
     a = ap.parse_args()
@@ -108,7 +110,7 @@ if __name__ == '__main__':
                                minutes=a.minutes, concurrent=a.concurrent, pruner_settings=a.pruner_settings,
                                schedule_free=not a.no_schedule_free, warm=not a.cold, seed=a.seed, startup=a.startup,
                                family=a.family, cap=a.cap, max_epochs=a.max_epochs, kd=a.kd and str(Path(a.kd).resolve()),
-                               warm_points=warm_points, **resume)
+                               warm_points=warm_points, seeds=a.seeds, **resume)
         print(f'job {future.job}', flush=True)
         seen = None
         while not future.done():

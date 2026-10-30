@@ -44,6 +44,7 @@ DEFAULTS = dict(
     arch='airbench', arch_kw={}, bn_scale=False, param_cap=0, tie=0, flip_eq=0, pca_init=False, tails=0,
     tail_epochs=3, kd_weighting='none', tta_gate=0.0, optimizer='sgd', beta2=0.99, augment='none', augment_m=9,
     train_on='train', kd_teacher='', kd_weight=0.0, kd_temp=4.0, precision='fp16', eq_group='d1', blur_pool=False,
+    se=0, srf=False, filter_keep=1.0, filter_proxy_widths=(32, 64, 64), filter_proxy_epochs=0.0,
     test='open',
     seed=0)
 
@@ -56,7 +57,7 @@ MEAN, STD = (0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)
 
 def model(widths=(64, 256, 256), depth: int = 2, scaling_factor: float = 1 / 9, bn_momentum: float = 0.4,
           whiten_kernel: int = 2, classes: int = 10, tie: int = 0, flip_eq: int = 0, eq_group: str = 'd1',
-          blur_pool: bool = False):
+          blur_pool: bool = False, se: int = 0, srf: bool = False):
     """The network (fp32; ``train`` casts it). ``bn_momentum`` is PyTorch's (the weight of the new batch).
     ``tie`` (method MT5): each group's last convolution applied ``tie`` more times, its weights shared, a batch norm of
     its own each time (depth at no stored convolution weights). ``flip_eq`` (method MT1): the last ``flip_eq`` groups
@@ -64,7 +65,9 @@ def model(widths=(64, 256, 256), depth: int = 2, scaling_factor: float = 1 / 9, 
     convolution of twice the width), the features pooled over each pair at the end (invariance by construction, not by
     test-time mirroring). ``eq_group`` 'd4': those groups equivariant to the flips and quarter turns instead
     (``methods.P4MConv``, fields of 8, 1/8 of the expanded convolution's weights). ``blur_pool``: each group's
-    downsampling anti-aliased (``methods.MaxBlurPool``) instead of ``MaxPool2d(2)``."""
+    downsampling anti-aliased (``methods.MaxBlurPool``) instead of ``MaxPool2d(2)``. ``se``: a squeeze-and-excitation
+    block at the end of each group with this reduction (``methods.FieldSE``, shared over a field; 0: none). ``srf``:
+    every trainable 3x3 kernel stored as structured-receptive-field coefficients (``methods.use_srf``)."""
     import torch
     from torch import nn
     from . import methods
@@ -105,6 +108,7 @@ def model(widths=(64, 256, 256), depth: int = 2, scaling_factor: float = 1 / 9, 
                 self.convs = nn.ModuleList(Conv(cout, cout) for _ in range(depth - 1))
                 norm = lambda: BatchNorm(cout)
             self.pool = methods.MaxBlurPool() if blur_pool else nn.MaxPool2d(2)
+            self.se = methods.FieldSE(cout, k if eq else 1, se) if se else None
             self.norms = nn.ModuleList(norm() for _ in range(depth - 1 + (tie if depth > 1 else 0)))
             self.activ = nn.GELU()
 
@@ -117,7 +121,7 @@ def model(widths=(64, 256, 256), depth: int = 2, scaling_factor: float = 1 / 9, 
                 if depth >= 3 and i == len(convs) - 1:
                     x = x + x0                                   # (depth 3: the residual over the last two)
                 x = self.activ(x)
-            return x
+            return self.se(x) if self.se is not None else x
 
     class Mul(nn.Module):
         def __init__(self, s):
@@ -135,6 +139,8 @@ def model(widths=(64, 256, 256), depth: int = 2, scaling_factor: float = 1 / 9, 
                         Group(w1, w2, eqs[1]), Group(w2, w3, eqs[2]), *pool, nn.Linear(w3, classes, bias=False),
                         Mul(scaling_factor))
     net[0].weight.requires_grad = False
+    if srf:
+        methods.use_srf(net)
     return net
 
 
@@ -144,7 +150,7 @@ def build(h: dict):
     if h.get('arch', 'airbench') == 'airbench':
         net = model(tuple(h['widths']), h['depth'], h['scaling_factor'], h['bn_momentum'], h['whiten_kernel'],
                     tie=int(h.get('tie', 0)), flip_eq=int(h.get('flip_eq', 0)), eq_group=h.get('eq_group', 'd1'),
-                    blur_pool=bool(h.get('blur_pool', False)))
+                    blur_pool=bool(h.get('blur_pool', False)), se=int(h.get('se', 0)), srf=bool(h.get('srf', False)))
         return net, net[0]
     from . import nets
     net = nets.build(h['arch'], **h.get('arch_kw', {}))
@@ -258,6 +264,7 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
         raise TypeError(f'unknown hyperparameters: {sorted(unknown)}')
     h = {**DEFAULTS, **hyperparameters}
     h['widths'] = tuple(int(w) for w in h['widths'])
+    h['filter_proxy_widths'] = tuple(int(w) for w in h['filter_proxy_widths'])
     h['arch_kw'] = dict(h['arch_kw'])
     for k in ('depth', 'batch_size', 'translate', 'cutout', 'tta_level', 'whiten_kernel', 'whiten_bias_epochs', 'seed'):
         h[k] = int(h[k])
@@ -295,6 +302,21 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     for m in net.modules():
         if isinstance(m, nn_batchnorm()):
             m.float()
+    proxy, proxy_info = None, {}
+    if h['filter_keep'] < 1:
+        # D1, data filtering (airbench96_faster's idea, with a proxy trained first and then fixed): a small network
+        # scores each batch by its loss, and the student trains on the hardest ``filter_keep`` share only
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            pr = train(data, save=tmp, device=device, widths=h['filter_proxy_widths'], depth=2, scaling_factor=1 / 9,
+                       epochs=h['filter_proxy_epochs'] or h['epochs'], batch_size=h['batch_size'], tta_level=0,
+                       test='sealed', seed=h['seed'] + 10_000)
+            proxy, _ = load(tmp, device=dev)
+        proxy = proxy.to(dtype).to(memory_format=torch.channels_last).eval()
+        for m in proxy.modules():
+            if isinstance(m, nn_batchnorm()):
+                m.float()
+        proxy_info = {'proxy': {'params': pr['params'], 'val_acc_notta': pr['val_acc_notta'], 'epochs': pr['epochs_charged']}}
     teachers = []
     if h['kd_teacher'] and h['kd_weight'] > 0:
         # one directory, or several separated by commas: an ensemble, its softened predictions averaged
@@ -379,6 +401,11 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     st = {'step': 0, 'history': [], 'pruned': False}
 
     def batch_loss(xb, yb):
+        if proxy is not None:
+            with torch.no_grad():
+                hard = loss_fn(proxy(xb), yb).float()
+            keep = hard.topk(max(1, int(round(h['filter_keep'] * len(yb))))).indices
+            xb, yb = xb[keep], yb[keep]
         with amp():
             out = net(xb)
         per = loss_fn(out.float() if h['precision'] == 'amp' else out, yb)     # (fp16: airbench's own, in fp16)
@@ -480,14 +507,18 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     seconds = time.time() - t0
     name = torch.cuda.get_device_name(dev) if dev.type == 'cuda' else 'cpu'
     charged = h['epochs'] + (max(0, int(h['tails']) - 1) * int(h['tail_epochs']) if h['tails'] else 0)
+    charged *= h['filter_keep']                              # (filtering: the images back-propagated, PLAN §2.1)
     common = {'train_seconds': round(seconds, 1), 'images_per_s': round(step * bs / seconds), 'device': name,
               'params': counts['stored'], 'params_trainable': counts['trainable'], 'steps': step,
-              'history': history, 'hyperparameters': {**h, 'widths': list(h['widths'])}, 'epochs_charged': charged}
+              'history': history, 'hyperparameters': {**h, 'widths': list(h['widths'])}, 'epochs_charged': charged,
+              **proxy_info}
     if pruned:
         return {'val_acc': history[-1]['val_acc'], 'pruned': True, 'progress': round(100 * step / total), **common}
     val, val_share = accuracy(x_val, y_val, h['tta_level'], h['tta_gate'])
     views = {0: 1, 1: 2, 2: 6, 3: 18}[h['tta_level']]
-    out = {'val_acc': round(val, 4), 'val_acc_notta': round(accuracy(x_val, y_val, 0)[0], 4)}
+    out = {'val_acc': round(val, 4), 'val_acc_notta': round(accuracy(x_val, y_val, 0)[0], 4),
+           # (1, 2 and 6 views of the same network: the equivariance-vs-TTA comparisons, PLAN §5.1)
+           'val_acc_by_views': {v: round(accuracy(x_val, y_val, lv)[0], 4) for lv, v in ((0, 1), (1, 2), (2, 6))}}
     if h['test'] == 'sealed':
         # (session 2026-10-30-equivariant-small: the test set is not evaluated during the session; final models only)
         share = val_share

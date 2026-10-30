@@ -12,6 +12,24 @@ starts from (as ``trial.params``); ``CALIBRATE[family]`` a short training to tim
 from __future__ import annotations
 
 TRAIN = 'cifarq.airbench:train'
+TRAIN_TWO_SEEDS = 'cifarq.families:train_two_seeds'
+
+
+def train_two_seeds(data: str | None = None, report=None, **hp) -> dict:
+    """A search trial on two seeds (session 2026-10-30-equivariant-small, PLAN §2.1): seed 0 trains with the study's
+    early stopping (its curve is the one the pruner sees); a survivor trains again at seed 1, unpruned; the value is
+    the mean validation accuracy. The test set stays sealed. One seed's search values ran 0.2-0.5 pp optimistic in
+    the previous session."""
+    from . import airbench
+    hp = {**hp, 'test': 'sealed'}
+    r0 = airbench.train(data, report=report, **{**hp, 'seed': 0})
+    if r0.get('pruned'):
+        return r0
+    r1 = airbench.train(data, **{**hp, 'seed': 1})
+    mean = lambda k: round((r0[k] + r1[k]) / 2, 5)
+    return {**r0, 'val_acc': mean('val_acc'), 'val_acc_notta': mean('val_acc_notta'),
+            'val_acc_seeds': [r0['val_acc'], r1['val_acc']], 'val_acc_notta_seeds': [r0['val_acc_notta'], r1['val_acc_notta']],
+            'train_seconds': round(r0['train_seconds'] + r1['train_seconds'], 1)}
 
 
 def recipe(trial, max_epochs: float = 40, kd: str = '') -> dict:

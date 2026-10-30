@@ -118,3 +118,4 @@ def test_distillation_weighting(built, tmp_path):
 def test_sealed_test_set_is_not_evaluated(built):
     r = airbench.train(**SMALL, test='sealed')
     assert 'test_acc' not in r and 'test_acc_notta' not in r and 0 <= r['val_acc'] <= 1
+    assert set(r['val_acc_by_views']) == {1, 2, 6} and r['val_acc_by_views'][6] == r['val_acc']
