@@ -1,6 +1,6 @@
 # Status: 2026-10-30-equivariant-small
 
-Updated 2026-10-30. Phase: **M3 done (H1: flips beat plain + 2 views at short schedules, tie at 100 epochs; D4 and BlurPool rejected). M4 screens running on the G4.**
+Updated 2026-10-30. Phase: **M4 done: structured receptive fields reach 95.73 % at one view (Inconclusive +0.11 pp); one-view target kept. M5 search next.**
 
 ## Objective
 
@@ -27,8 +27,21 @@ finalist at 95.00 ± 0.08 % (one view) / 95.45 ± 0.17 % (6 views), 1.94 M, 40 e
 
 ## Jobs
 
-- **M4-screens** (G4, frozen at fa4b708; 18 trainings + M3's PW control repair, 9; `scratchpad/m4.log`).
-  Balance before 850.57. Session spend so far 11.8 units (862.40 -> 850.57).
+None. Session spend 23.45 units (balance 838.95).
+
+## M4 readout (val at 1 / 6 views, 3 seeds, paired with M3's D1-e100: 95.62 / 96.02)
+
+| Lever | 1 view | Δ (paired) | 6 views | Outcome |
+|---|---|---|---|---|
+| SRF (160/136/176, 1.94 M, 353 M MACs) | 95.73 | +0.11 (+0.22/+0.12/0.00) | 96.09 | Inconclusive; crosses 95.7 |
+| KD weighted by disagreement | 95.55 | −0.07 | 95.98 | Null |
+| Weight-tied depth | 95.48 | −0.14 | 95.92 | Null |
+| SE (field-shared) | 95.39 | −0.23 | 95.89 | Rejected |
+| Proxy filtering (keep 0.5) | 95.19 | −0.43 | 95.78 | Rejected |
+| Muon (untuned) | 94.93 | −0.69 | 95.53 | Rejected |
+
+M3's repaired control: flips beat a plain net with the same MACs a view (2.60 M parameters) by +0.39 / +0.40 / +0.32 pp at
+one view (20 / 40 / 100 epochs).
 
 ## M3 readout (val, 3 seeds 1-3; 1 / 2 / 6 views)
 
