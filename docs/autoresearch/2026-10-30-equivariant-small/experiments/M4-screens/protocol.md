@@ -12,4 +12,4 @@ Frozen: 2026-10-30, commit fa4b708 (eqsm/main; M1 and O4 merged). Dataset datase
 - **Gates (PLAN §2.1):** Promising at ≥ +0.15 pp at 1 view over the baseline (3 paired seeds); Null inside ± 0.10.
   The target decision (PLAN §1): if no lever, alone or combined, brings one view to ≥ 95.7 % at 100 epochs, the
   target falls back to six views.
-- **Compute:** 18 trainings plus the 9-run PW control repair of M3 (param_cap 0), ~40 min, cap 8 units.
+- **Compute:** 18 trainings plus the 9-run PW control repair of M3 (param_cap 0; in this grid as `M3a2-PW-e*`, M3 attempt 2), ~40 min, cap 8 units.
