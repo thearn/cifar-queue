@@ -96,7 +96,7 @@ if __name__ == '__main__':
         hints['gpu_mb'] = a.gpu_mb or 7000
     # the whole GPU for the search: its own trials share it, nothing else should
     # (a teacher's directory is sent like the data, once per VM, at the same absolute path)
-    with executor('tune_on_vm', {target: 1}, data=[dataset_file(), *resume.values(), *([a.kd] if a.kd else [])], **hints) as ex:
+    with executor('tune_on_vm', {target: 1}, data=[dataset_file(), *resume.values(), *([str(Path(a.kd).resolve())] if a.kd else [])], **hints) as ex:
         if a.driver == 'ray':
             if a.pruner in ('median', 'rungs'):
                 raise SystemExit('the Ray driver takes asha, hyperband or none')
