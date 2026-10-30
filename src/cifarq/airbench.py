@@ -43,7 +43,8 @@ DEFAULTS = dict(
     # additions
     arch='airbench', arch_kw={}, bn_scale=False, param_cap=0, tie=0, flip_eq=0, pca_init=False, tails=0,
     tail_epochs=3, kd_weighting='none', tta_gate=0.0, optimizer='sgd', beta2=0.99, augment='none', augment_m=9,
-    train_on='train', kd_teacher='', kd_weight=0.0, kd_temp=4.0, precision='fp16',
+    train_on='train', kd_teacher='', kd_weight=0.0, kd_temp=4.0, precision='fp16', eq_group='d1', blur_pool=False,
+    test='open',
     seed=0)
 
 AIRBENCH94 = dict(DEFAULTS)
@@ -54,13 +55,16 @@ MEAN, STD = (0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)
 
 
 def model(widths=(64, 256, 256), depth: int = 2, scaling_factor: float = 1 / 9, bn_momentum: float = 0.4,
-          whiten_kernel: int = 2, classes: int = 10, tie: int = 0, flip_eq: int = 0):
+          whiten_kernel: int = 2, classes: int = 10, tie: int = 0, flip_eq: int = 0, eq_group: str = 'd1',
+          blur_pool: bool = False):
     """The network (fp32; ``train`` casts it). ``bn_momentum`` is PyTorch's (the weight of the new batch).
     ``tie`` (method MT5): each group's last convolution applied ``tie`` more times, its weights shared, a batch norm of
     its own each time (depth at no stored convolution weights). ``flip_eq`` (method MT1): the last ``flip_eq`` groups
     made equivariant to horizontal flips (``methods.FlipConv``: channel pairs, half the free weights of a plain
     convolution of twice the width), the features pooled over each pair at the end (invariance by construction, not by
-    test-time mirroring)."""
+    test-time mirroring). ``eq_group`` 'd4': those groups equivariant to the flips and quarter turns instead
+    (``methods.P4MConv``, fields of 8, 1/8 of the expanded convolution's weights). ``blur_pool``: each group's
+    downsampling anti-aliased (``methods.MaxBlurPool``) instead of ``MaxPool2d(2)``."""
     import torch
     from torch import nn
     from . import methods
@@ -81,23 +85,26 @@ def model(widths=(64, 256, 256), depth: int = 2, scaling_factor: float = 1 / 9, 
             w = self.weight.data
             torch.nn.init.dirac_(w[:w.size(1)])
 
-    class PairNorm(BatchNorm):                               # (MT1: one set of statistics for both members of a pair)
+    eq_conv = {'d1': methods.FlipConv, 'd4': methods.P4MConv}[eq_group]
+    k = eq_conv.order
+
+    class PairNorm(BatchNorm):                               # (one set of statistics for all members of a field)
         def forward(self, x):
-            n, c2, hh, ww_ = x.shape
-            return super().forward(x.reshape(n * 2, c2 // 2, hh, ww_)).reshape(n, c2, hh, ww_)
+            n, kc, hh, ww_ = x.shape
+            return super().forward(x.reshape(n * k, kc // k, hh, ww_)).reshape(n, kc, hh, ww_)
 
     class Group(nn.Module):
         def __init__(self, cin, cout, eq: str = ''):
             super().__init__()
             if eq:                                           # 'lift' (plain in, pairs out) or 'pair' (pairs in and out)
-                self.conv1, self.norm1 = methods.FlipConv(cin, cout, lift=eq == 'lift'), PairNorm(cout)
-                self.convs = nn.ModuleList(methods.FlipConv(cout, cout) for _ in range(depth - 1))
+                self.conv1, self.norm1 = eq_conv(cin, cout, lift=eq == 'lift'), PairNorm(cout)
+                self.convs = nn.ModuleList(eq_conv(cout, cout) for _ in range(depth - 1))
                 norm = lambda: PairNorm(cout)
             else:
                 self.conv1, self.norm1 = Conv(cin, cout), BatchNorm(cout)
                 self.convs = nn.ModuleList(Conv(cout, cout) for _ in range(depth - 1))
                 norm = lambda: BatchNorm(cout)
-            self.pool = nn.MaxPool2d(2)
+            self.pool = methods.MaxBlurPool() if blur_pool else nn.MaxPool2d(2)
             self.norms = nn.ModuleList(norm() for _ in range(depth - 1 + (tie if depth > 1 else 0)))
             self.activ = nn.GELU()
 
@@ -123,7 +130,7 @@ def model(widths=(64, 256, 256), depth: int = 2, scaling_factor: float = 1 / 9, 
     ww = 2 * 3 * whiten_kernel ** 2
     w1, w2, w3 = widths
     eqs = [''] * (3 - flip_eq) + (['lift'] + ['pair'] * (flip_eq - 1) if flip_eq else [])
-    pool = [methods.PairMaxPool()] if flip_eq else [nn.MaxPool2d(3), nn.Flatten()]
+    pool = [methods.GroupMaxPool(k)] if flip_eq else [nn.MaxPool2d(3), nn.Flatten()]
     net = nn.Sequential(Conv(3, ww, whiten_kernel, padding=0, bias=True), nn.GELU(), Group(ww, w1, eqs[0]),
                         Group(w1, w2, eqs[1]), Group(w2, w3, eqs[2]), *pool, nn.Linear(w3, classes, bias=False),
                         Mul(scaling_factor))
@@ -136,7 +143,8 @@ def build(h: dict):
     any other a builder of ``cifarq.nets`` with ``arch_kw``."""
     if h.get('arch', 'airbench') == 'airbench':
         net = model(tuple(h['widths']), h['depth'], h['scaling_factor'], h['bn_momentum'], h['whiten_kernel'],
-                    tie=int(h.get('tie', 0)), flip_eq=int(h.get('flip_eq', 0)))
+                    tie=int(h.get('tie', 0)), flip_eq=int(h.get('flip_eq', 0)), eq_group=h.get('eq_group', 'd1'),
+                    blur_pool=bool(h.get('blur_pool', False)))
         return net, net[0]
     from . import nets
     net = nets.build(h['arch'], **h.get('arch_kw', {}))
@@ -478,11 +486,15 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     if pruned:
         return {'val_acc': history[-1]['val_acc'], 'pruned': True, 'progress': round(100 * step / total), **common}
     val, val_share = accuracy(x_val, y_val, h['tta_level'], h['tta_gate'])
-    test, test_share = accuracy(x_test, y_test, h['tta_level'], h['tta_gate'])
     views = {0: 1, 1: 2, 2: 6, 3: 18}[h['tta_level']]
-    out = {'val_acc': round(val, 4), 'val_acc_notta': round(accuracy(x_val, y_val, 0)[0], 4), 'test_acc': round(test, 4),
-           'test_acc_notta': round(accuracy(x_test, y_test, 0)[0], 4),
-           'views_per_image': round(1 + views * test_share, 3) if h['tta_gate'] > 0 and h['tta_level'] else views, **common}
+    out = {'val_acc': round(val, 4), 'val_acc_notta': round(accuracy(x_val, y_val, 0)[0], 4)}
+    if h['test'] == 'sealed':
+        # (session 2026-10-30-equivariant-small: the test set is not evaluated during the session; final models only)
+        share = val_share
+    else:
+        test, share = accuracy(x_test, y_test, h['tta_level'], h['tta_gate'])
+        out.update(test_acc=round(test, 4), test_acc_notta=round(accuracy(x_test, y_test, 0)[0], 4))
+    out.update(views_per_image=round(1 + views * share, 3) if h['tta_gate'] > 0 and h['tta_level'] else views, **common)
     if save:
         out['saved'] = str(save_model(net, h, save))
     return out

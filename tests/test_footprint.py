@@ -41,3 +41,13 @@ def test_predictions_are_probabilities_for_unseen_images(built, tmp_path):
     probs = footprint.predictor(r['saved']).predict(images)
     assert probs.shape == (8, 10) and np.allclose(probs.sum(1), 1, atol=1e-5)
     assert json.loads((tmp_path / 'm' / 'config.json').read_text())['family'] == 'airbench'
+
+
+def test_macs_count_equivariant_layers_as_the_convolution_they_run():
+    import torch
+    from cifarq import methods
+    for lift in (True, False):
+        layer = methods.FlipConv(8, 8, lift=lift)
+        plain = torch.nn.Conv2d(*layer.full().shape[1::-1], 3, padding=1, bias=False)
+        x = torch.zeros(1, layer.full().shape[1], 16, 16)
+        assert footprint.count_macs(layer, x.shape) == footprint.count_macs(plain, x.shape) > 0

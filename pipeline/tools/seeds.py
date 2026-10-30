@@ -62,7 +62,12 @@ def main():
     t0 = time.time()
     # (stall_min: the queue flags a job whose log is quiet this long; airbench.train logs every epoch)
     hints = {'minutes': 30, 'stall_min': 10, **({'gpu_mb': a.gpu_mb} if a.gpu_mb else {})}
-    with executor(a.stage, targets, data=[dataset_file()], **hints) as ex:
+    # a distillation teacher (one directory, or several separated by commas) goes to a VM with the data, by its
+    # absolute path, which is the path the job is given
+    teachers = [str(Path(t.strip()).resolve()) for t in str(params.get('kd_teacher') or '').split(',') if t.strip()]
+    if teachers:
+        params['kd_teacher'] = ','.join(teachers)
+    with executor(a.stage, targets, data=[dataset_file(), *teachers], **hints) as ex:
         futures = {s: ex.submit(fn, data=str(dataset_file()), **({'save': 'model'} if a.save else {}), **{**params, 'seed': s})
                    for s in a.seeds}
         for s, f in futures.items():
@@ -74,8 +79,9 @@ def main():
             if a.save and r.get('saved'):
                 r['saved'] = str(Path(f.job) / r['saved'])
             runs.append(r)
-            print(f"seed {s}: val {r.get('val_acc')} test {r.get('test_acc')} (no TTA {r.get('test_acc_notta')}) "
-                  f"{r.get('train_seconds')} s on {r.get('device')}", flush=True)
+            seen = (f"test {r.get('test_acc')} (no TTA {r.get('test_acc_notta')})" if 'test_acc' in r
+                    else f"(no TTA {r.get('val_acc_notta')}; test sealed)")
+            print(f"seed {s}: val {r.get('val_acc')} {seen} {r.get('train_seconds')} s on {r.get('device')}", flush=True)
     stat = lambda k: {'mean': round(statistics.mean(v), 5), 'sd': round(statistics.stdev(v), 5) if len(v) > 1 else None,
                       'min': min(v), 'max': max(v)} if (v := [r[k] for r in runs if r.get(k) is not None]) else None
     summary = {'experiment': a.experiment, 'fn': fn, 'params': params, 'seeds': a.seeds, 'targets': targets,
@@ -84,7 +90,7 @@ def main():
                'runs': [{k: v for k, v in r.items() if k != 'hyperparameters'} for r in runs]}
     f = out / f'{time.strftime("%Y%m%d-%H%M%S")}.json'
     f.write_text(json.dumps(summary, indent=1, default=str) + '\n')
-    print(json.dumps({k: summary[k] for k in ('val_acc', 'test_acc', 'test_acc_notta', 'train_seconds')}, indent=1))
+    print(json.dumps({k: summary[k] for k in ('val_acc', 'val_acc_notta', 'test_acc', 'test_acc_notta', 'train_seconds')}, indent=1))
     print('saved', f)
 
 

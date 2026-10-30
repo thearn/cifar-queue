@@ -113,3 +113,8 @@ def test_distillation_weighting(built, tmp_path):
     for kind in ('disagree', 'hard'):
         r = airbench.train(**SMALL, kd_teacher=teacher['saved'], kd_weight=0.5, kd_weighting=kind)
         assert np.isfinite(r['history'][-1]['loss'])
+
+
+def test_sealed_test_set_is_not_evaluated(built):
+    r = airbench.train(**SMALL, test='sealed')
+    assert 'test_acc' not in r and 'test_acc_notta' not in r and 0 <= r['val_acc'] <= 1

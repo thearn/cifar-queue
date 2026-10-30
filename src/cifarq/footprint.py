@@ -71,7 +71,13 @@ def count_macs(net, shape=(1, 3, 32, 32)) -> int:
             total[0] += out.numel() * (m.in_channels // m.groups) * m.kernel_size[0] * m.kernel_size[1]
         elif isinstance(m, torch.nn.Linear):
             total[0] += out.numel() * m.in_features
-    handles = [m.register_forward_hook(hook) for m in net.modules() if isinstance(m, (torch.nn.Conv2d, torch.nn.Linear))]
+        elif hasattr(m, 'full'):
+            # an equivariant convolution (methods.FlipConv, P4MConv): the expanded kernel it runs, not its stored
+            # weights (revision a4, 2026-10-30: before it, these layers were not counted at all)
+            k = m.full()
+            total[0] += out.numel() * k.shape[1] * k.shape[2] * k.shape[3]
+    counted = lambda m: isinstance(m, (torch.nn.Conv2d, torch.nn.Linear)) or hasattr(m, 'full')
+    handles = [m.register_forward_hook(hook) for m in net.modules() if counted(m)]
     try:
         net = net.float().eval()
         with torch.no_grad():
