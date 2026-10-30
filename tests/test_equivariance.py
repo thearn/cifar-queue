@@ -93,3 +93,12 @@ def test_se_srf_and_filtering_train(built):
     assert r['params'] < plain['params'] + 2000 and r['params'] != plain['params']
     f = airbench.train(**base, filter_keep=0.5, filter_proxy_widths=(8, 8, 8))
     assert f['epochs_charged'] == 0.5 and f['proxy']['params'] > 0 and 0 <= f['val_acc'] <= 1
+
+
+def test_muon_trains_and_orthogonalises(built):
+    g = torch.randn(16, 72)
+    o = methods.newton_schulz(g).float()
+    sv = torch.linalg.svdvals(o)
+    assert sv.max() < 1.5 and sv.min() > 0.3                # (Muon's iteration: singular values near 1, not exactly)
+    r = airbench.train(widths=(16, 16, 16), depth=3, flip_eq=2, batch_size=64, epochs=1, test='sealed', optimizer='muon')
+    assert 0.1 < r['val_acc'] <= 1
