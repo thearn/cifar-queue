@@ -1,0 +1,1 @@
+id	date	commit	goal	family	hypothesis	target	units	gpu_busy	params	macs_1view	epochs_charged	seeds	val_mean_1view	val_mean_tta	val_sd	delta_vs_ref_params	delta_vs_ref_macs	p	class	outcome	artifacts	note
