@@ -24,3 +24,23 @@ to select. Sampler: multivariate TPE, constant liar, 16 startup trials, seed 0.
 
 **Gates.** GPU busy ≥ 90 % over the job (under 80 %: stop, diagnose, resume). Units tracked from `solveq colab hours`
 (cifar-g4 at 17.9 before this study).
+
+## Revision b (2026-10-30, after phase 1, before phase 2)
+
+Phase 1 (job 00002-on_vm, 40 min, 237 trials, 190 complete, 47 over the cap; GPU busy 99 %): best 95.64 % val
+(trial 84: depth 3, 128/128/192, 1.65 M, 38.8 epochs, test 95.07 %); top 12 within 0.22 pp, the best unchanged over
+the last 60 % of trials (saturated by §M3's rule within this space). The top sits at w1 = 128 and batch 1024, the tops
+of their ranges, and at TTA level 2 and ~40 epochs (fixed by the goal).
+
+Phase 2 is a new study (`--warm-from` phase 1's top 4), changed in three ways:
+- w1 adds 160 and 192, batch adds 2048 (the edges);
+- distillation enters the space: teacher airbench96 45k seed 0 (`results/jobs/train/00023-train/model`, sent to the VM
+  as data), `kd` on/off, weight 0-0.95, temperature 1-8; the warm points carry kd on at 0.5 and T 4;
+- early stopping from `fit_rungs.py` on phase 1: rungs [50], keep 2/3 (83 % of the compute, 22 of the top 24 kept;
+  rank correlation with the final value only 0.3 before 70 %, so a light cut).
+
+A fix that can affect results: the teacher is now cast to the student's precision (on a GPU at fp16 it had fp32
+weights against fp16 batches, which would have failed; CPU tests ran fp32 and did not show it). Phase 1 did not use
+distillation, so its results stand.
+
+Budget: ~35 minutes (~6 units, the plan's method-inclusive share). Phase 1 cost ~6.5 units (balance 884.46 to 878.58).

@@ -286,7 +286,11 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     teacher = None
     if h['kd_teacher'] and h['kd_weight'] > 0:
         teacher, _ = load(h['kd_teacher'], device=dev)
-        teacher.eval()
+        # (the student's precision: on a GPU at fp16 the batches are fp16, which fp32 weights refuse)
+        teacher = teacher.to(dtype).to(memory_format=torch.channels_last).eval()
+        for m in teacher.modules():
+            if isinstance(m, nn_batchnorm()):
+                m.float()
 
     bs, n = h['batch_size'], len(y_train)
     steps_per_epoch = n // bs

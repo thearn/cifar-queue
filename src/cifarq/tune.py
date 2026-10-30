@@ -183,7 +183,7 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
           data: str | None = None, resume_from: str | None = None, pruner: str = 'none', concurrent: int | None = None,
           minutes: float | None = None, turns: bool = True, pruner_settings: dict | None = None,
           schedule_free: bool = True, warm: bool = True, startup: int = 16, family: str = 'b0', cap: int = 2_000_000,
-          max_epochs: float = 40, kd: str = '') -> dict:
+          max_epochs: float = 40, kd: str = '', warm_points: list | None = None) -> dict:
     """Mode 2, run as one queue job on a VM: how many trainings the GPU runs at once with gain (``calibrate``, on
     2-epoch width-32 runs), then Optuna over the whole ``space`` with that many trials in flight as processes on the GPU, the study in
     ``study.db`` in the job's directory (brought back with the job). ``resume_from``: a study database of a run that
@@ -197,7 +197,8 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
     best, two processes take turns at the card (``solve_queue.gpu.device_turn``), so the next trial's set-up overlaps this
     one's training. ``family``: ``b0`` (this space, ``train.train``, Page's recipe first) or a family of
     ``cifarq.families`` (``airbench.train``, its space under ``cap`` parameters and ``max_epochs``, its warm points;
-    ``kd`` a teacher directory for distillation). The best trial, the calibration and the timing."""
+    ``kd`` a teacher directory for distillation). ``warm_points``: the points to start from instead of the family's
+    (an earlier study's best). The best trial, the calibration and the timing."""
     import functools
     import optuna
     import shutil
@@ -205,6 +206,7 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
     from solve_queue.parallel import GPUProcessExecutor, calibrate
     from solve_queue.hpo import make_pruner
     t0 = time.time()
+    given = None if warm_points is None else list(warm_points)
     if family == 'b0':
         fn, space_fn, warm_points = TRAIN, functools.partial(space, schedule_free=schedule_free), [PAGE]
         cal = {'epochs': 2, 'width': 32}
@@ -212,6 +214,7 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
         from . import families
         fn, warm_points, cal = families.TRAIN, families.WARM[family], families.CALIBRATE[family]
         space_fn = functools.partial(families.SPACES[family], cap=cap, max_epochs=max_epochs, kd=kd)
+    warm_points = warm_points if given is None else given
     if concurrent:
         k, table = concurrent, [{'concurrent': concurrent, 'given': True}]
     else:

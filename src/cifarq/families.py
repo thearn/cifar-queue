@@ -4,6 +4,8 @@ pruned at step 0 by the trainer, so the sampler learns the boundary) plus the sh
 ``max_epochs``, batch, SGD's decoupled learning rate, momentum and weight decay, label smoothing, schedule, bias
 scaler, batch-norm momentum, translation, cutout, policy augmentation, test-time views, logit scale.
 
+(M3-airbench phase 1 found its best at w1 128 and batch 1024, the tops of their ranges: both widened for phase 2.)
+
 ``SPACES[family](trial, cap, max_epochs)`` gives ``airbench.train``'s arguments; ``WARM[family]`` the points each study
 starts from (as ``trial.params``); ``CALIBRATE[family]`` a short training to time concurrency with.
 """
@@ -14,7 +16,7 @@ TRAIN = 'cifarq.airbench:train'
 
 def recipe(trial, max_epochs: float = 40, kd: str = '') -> dict:
     s, c = trial.suggest_float, trial.suggest_categorical
-    p = {'epochs': s('epochs', 20.0, max_epochs), 'batch_size': c('batch_size', [256, 512, 1024]),
+    p = {'epochs': s('epochs', 20.0, max_epochs), 'batch_size': c('batch_size', [256, 512, 1024, 2048]),
          'lr': s('lr', 2.0, 30.0, log=True), 'momentum': s('momentum', 0.7, 0.95),
          'weight_decay': s('weight_decay', 0.003, 0.05, log=True), 'bias_scaler': s('bias_scaler', 4.0, 128.0, log=True),
          'label_smoothing': s('label_smoothing', 0.0, 0.3), 'warmup_frac': s('warmup_frac', 0.02, 0.3),
@@ -36,7 +38,7 @@ def recipe(trial, max_epochs: float = 40, kd: str = '') -> dict:
 def airbench_space(trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
     c = trial.suggest_categorical
     p = {'arch': 'airbench', 'depth': c('depth', [2, 3]),
-         'widths': (c('w1', [32, 48, 64, 80, 96, 112, 128]), c('w2', [96, 128, 160, 192, 224, 256, 288, 320, 384]),
+         'widths': (c('w1', [32, 48, 64, 80, 96, 112, 128, 160, 192]), c('w2', [96, 128, 160, 192, 224, 256, 288, 320, 384]),
                     c('w3', [96, 128, 160, 192, 224, 256, 288, 320, 384, 448, 512]))}
     return {**p, **recipe(trial, max_epochs, kd), 'param_cap': cap}
 
