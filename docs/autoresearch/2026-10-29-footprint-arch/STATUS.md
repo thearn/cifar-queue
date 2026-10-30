@@ -64,14 +64,17 @@ account's two VM slots.
 
 ## Jobs
 
-- **M3-pyramidnet** (`experiments/M3-pyramidnet/protocol.md`, branch `fparch/M3-pyramidnet`): G4, 50 min,
-  report-only pruner, concurrency calibrated; log `scratchpad/m3p.log`.
-- **M3-airbench top 5 x seeds 1-3** (winner's curse control; the searches trained seed 0), local, sequential: p1-t84,
-  p2-t158 (kd), p1-t157, p1-t236, p2-t30 (kd); configs in `results/autoresearch/M3-airbench-top5/`.
-- M3-airbench: phase 1 best 95.64 % val (depth 3, 128/128/192, 1.65 M); phase 2 (distillation, wider w1/batch) best
-  95.60 %: the family is saturated near 95.6 % single-seed val. Session spend 12.0 units at 05:25 (balance 872.46).
-- M2 closed locally: A4 PyramidNet 95.18 % val (to M3), A5 DenseNet stopped at epoch 38 (93.74 % no TTA), ConvMixer p1
-  not run (too slow on the 4060).
+PLAN §9 pivot (2026-10-30): stronger teachers (P1), method screens at matched parameters (P2), one combined study.
+
+- **Baseline (airbench top 5, seeds 1-3, done but p2-t30):** best p2-t158 (128/160/192, 1.91 M, kd from one
+  airbench96 at w 0.12): 95.40 % val, 95.41 ± 0.11 % test. p1-t157 95.35 / 95.25; p1-t236 95.25 / 95.10; p1-t84 (the
+  search's best) 95.17 / 95.06. Winner's curse 0.2-0.5 pp. Under the 95.5 % readout: the pivot stands.
+- **P1 teacher:** the ensemble of the three airbench96 45k models reaches 96.30 % val (singles 95.78-96.08). Screens
+  queued after MT1: ens3 at p2-t158's kd settings and at w 0.5 T 4, seeds 1-3 (`scratchpad/p1.sh`).
+- **P2 MT1** flip-equivariance at p1-t84's recipe and matched parameters (fe1 128/128/144 1.68 M; fe2 128/96/144
+  1.76 M), seeds 1-3, running (`scratchpad/p2.sh`); compared with p1-t84's retrain.
+- **M3-pyramidnet**, G4 50 min (job via `scratchpad/m3p.log`): 16 trials at 06:00, best the warm point 95.28 %.
+- Session spend 12.0 units before the PyramidNet study.
 - Watcher over all of them.
 
 ## Standing instructions
