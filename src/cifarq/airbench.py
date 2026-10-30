@@ -43,7 +43,8 @@ DEFAULTS = dict(
     # additions
     arch='airbench', arch_kw={}, bn_scale=False, param_cap=0, tie=0, flip_eq=0, pca_init=False, tails=0,
     tail_epochs=3, kd_weighting='none', tta_gate=0.0, optimizer='sgd', beta2=0.99, augment='none', augment_m=9,
-    train_on='train', kd_teacher='', kd_weight=0.0, kd_temp=4.0, precision='fp16',
+    train_on='train', kd_teacher='', kd_weight=0.0, kd_temp=4.0, precision='fp16', eq_group='d1', blur_pool=False,
+    test='open',
     seed=0)
 
 AIRBENCH94 = dict(DEFAULTS)
@@ -478,11 +479,15 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     if pruned:
         return {'val_acc': history[-1]['val_acc'], 'pruned': True, 'progress': round(100 * step / total), **common}
     val, val_share = accuracy(x_val, y_val, h['tta_level'], h['tta_gate'])
-    test, test_share = accuracy(x_test, y_test, h['tta_level'], h['tta_gate'])
     views = {0: 1, 1: 2, 2: 6, 3: 18}[h['tta_level']]
-    out = {'val_acc': round(val, 4), 'val_acc_notta': round(accuracy(x_val, y_val, 0)[0], 4), 'test_acc': round(test, 4),
-           'test_acc_notta': round(accuracy(x_test, y_test, 0)[0], 4),
-           'views_per_image': round(1 + views * test_share, 3) if h['tta_gate'] > 0 and h['tta_level'] else views, **common}
+    out = {'val_acc': round(val, 4), 'val_acc_notta': round(accuracy(x_val, y_val, 0)[0], 4)}
+    if h['test'] == 'sealed':
+        # (session 2026-10-30-equivariant-small: the test set is not evaluated during the session; final models only)
+        share = val_share
+    else:
+        test, share = accuracy(x_test, y_test, h['tta_level'], h['tta_gate'])
+        out.update(test_acc=round(test, 4), test_acc_notta=round(accuracy(x_test, y_test, 0)[0], 4))
+    out.update(views_per_image=round(1 + views * share, 3) if h['tta_gate'] > 0 and h['tta_level'] else views, **common)
     if save:
         out['saved'] = str(save_model(net, h, save))
     return out
