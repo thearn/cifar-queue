@@ -1,6 +1,6 @@
 # Status: 2026-10-30-equivariant-small
 
-Updated 2026-10-30. Phase: **M5 done: the search saturated at ~95.7 % one-view val (no trial beat the finalist). M6 retrains of the top candidates next.**
+Updated 2026-10-30. Phase: **M6 stage 1 done: all candidates within 0.15 pp (1 view 95.41-95.55, 6 views 95.80-95.97); finalists T39 (1 view) and FIN (6 views); stage 2 (seeds 4-5) running.**
 
 ## Objective
 
@@ -29,6 +29,13 @@ finalist at 95.00 ± 0.08 % (one view) / 95.45 ± 0.17 % (6 views), 1.94 M, 40 e
 
 - None running. **Session spend ≈ 43 units** of 75: 25.2 to 12:25 by the balance (only our VM up), then ~17.6 for M5 by our
   VM's hours at 10.05/h (a second session's G4, `snapclip-g4`, has been up since ~12:25, so the balance no longer measures us).
+
+## Run-to-run noise (M6)
+
+The same configuration and seeds retrained give different results: M4's SRF (seeds 1-3) 95.73 / 96.09 % at 1 / 6 views,
+M6's 95.45 / 95.80 %; one seed moved 0.54 pp. Airbench training is nondeterministic on the GPU (cudnn.benchmark), so a
+seed does not pin a run; per-run noise is ~0.2 pp and 3-seed means move by up to ~0.3 pp. Screens' small effects
+(|Δ| < 0.2 pp) are inside it.
 
 ## M4 readout (val at 1 / 6 views, 3 seeds, paired with M3's D1-e100: 95.62 / 96.02)
 
