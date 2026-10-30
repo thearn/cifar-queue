@@ -1,0 +1,13 @@
+# Changes here will be overwritten by Copier; do not edit by hand
+_src_path: /mnt/c/Users/trist/Documents/code/ml-queue-template
+author: Tristan Hearn
+default_gpu: L4
+description: CIFAR-10 with a small CNN, trained and tuned through the solve queue
+    (local GPU and Colab VMs)
+hf_user: thearn
+license: Apache-2.0
+package_name: cifarq
+project_name: cifar-queue
+python_version: '3.12'
+repo_name: cifar-queue
+solve_queue_path: ../solve-queue

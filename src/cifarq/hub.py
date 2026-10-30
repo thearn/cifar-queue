@@ -1,4 +1,4 @@
-"""The trained network as a Hugging Face model: ``ResNet9`` is ``train.model`` behind ``PyTorchModelHubMixin``, so a
+"""The trained network as a Hugging Face model: ``ResNet9`` is ``model.model`` behind ``PyTorchModelHubMixin``, so a
 saved directory (``model.safetensors`` and ``config.json``) loads with ``ResNet9.from_pretrained(path or repo id)`` and
 publishes with ``push_to_hub``. ``config.json`` holds the constructor's arguments (the architecture, the whitening
 filters' shape only: their values are weights) and ``tta_flip``, which ``predict`` uses by default.
@@ -17,7 +17,7 @@ import torch.nn as nn
 from huggingface_hub import PyTorchModelHubMixin
 
 from .data import CLASSES
-from .train import MEAN, STD, model
+from .model import MEAN, STD, model
 
 ARCHITECTURE = ('width', 'dropout', 'activation', 'celu_alpha', 'head', 'logit_scale', 'whiten')
 

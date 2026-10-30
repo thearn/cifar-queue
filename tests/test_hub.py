@@ -1,16 +1,11 @@
 """A trained network saved as a ``hub.ResNet9`` loads back with the same outputs (no GPU): every head, with and without
 the whitening layer, and ``predict``'s normalisation and flip averaging match the training code's."""
-import sys
-from pathlib import Path
+import numpy as np
+import pytest
+import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-
-import numpy as np  # noqa: E402
-import pytest  # noqa: E402
-import torch  # noqa: E402
-
-from cifarq import train  # noqa: E402
-from cifarq.hub import ResNet9, save  # noqa: E402
+from cifarq import train
+from cifarq.hub import ResNet9, save
 
 
 @pytest.mark.parametrize('head,whiten', [('linear', False), ('cosine', True), ('bn', False)])

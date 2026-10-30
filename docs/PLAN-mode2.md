@@ -1,5 +1,11 @@
 # Plan: mode 2 as efficient as it can be (a whole search on one VM)
 
+> Written before the repository moved to the ml-queue-template layout (2026-10-29). The scripts named here are now:
+> `scripts/1_single.py` → `pipeline/40_train.py`, `2_optuna_on_vm.py` → `pipeline/55_tune_on_vm.py`,
+> `3_optuna_distributed.py` → `pipeline/50_tune.py`, `4_champion.py` → `pipeline/60_champion.py`, `publish.py` →
+> `pipeline/70_publish.py`, `prepare_data.py` → `pipeline/10_ingest.py` to `30_dataset.py`, `watch.py`,
+> `rung_check.py`, `conformal_check.py` and `5_pbt_g4.py` → `pipeline/tools/`. Results are in `docs/RESULTS.md`.
+
 Written 2026-10-29, at the user's request ("make sure that's as efficient as we can make it"; "make sure ASHA/hyperband
 work as part of that effort"). Mode 2 is one queue job on one Colab VM: Optuna (or Ray Tune) runs there, its trials
 as processes on the VM's GPU (`tune.on_vm`, `solve_queue.parallel.GPUProcessExecutor`).

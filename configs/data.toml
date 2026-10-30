@@ -1,0 +1,31 @@
+# Where the raw data comes from, how it is decoded, and how the dataset is split. Every stage records the settings it
+# ran with in its manifest (data/manifests/) and runs again when they change.
+
+[source]
+# CIFAR-10's parquet files on the Hugging Face hub at a pinned revision; "synthetic" makes tiny CIFAR-shaped parquet
+# files here instead (the tests: no network)
+uri = "hf://datasets/uoft-cs/cifar10@0b2714987fa478483af9968de7c934580d0bb9a2/plain_text"
+pattern = "*.parquet"
+
+[source.synthetic]                # the tests only: random images in the hub's parquet format
+train = 600
+test = 200
+seed = 0
+
+[clean]
+classes = ["airplane", "automobile", "bird", "cat", "deer", "dog", "frog", "horse", "ship", "truck"]
+size = 32                         # images other than size x size RGB are refused, not resized
+
+[validate]
+min_rows = 100
+max_drop_fraction = 0.0           # CIFAR-10 has no dirt: a dropped image means the source changed
+
+[split]
+# NOT the template's hash split: the validation images are the first `validation` of
+# numpy.random.default_rng(seed).permutation(50000) over the training file, as train() drew them before the dataset
+# stage existed, so every study and champion so far compares with what runs now. Change only on purpose.
+validation = 5000
+seed = 1234
+
+[storage]
+bucket = ""                       # unused: solve-queue sends the prepared dataset to each VM, by its content

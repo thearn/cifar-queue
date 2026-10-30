@@ -4,17 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cifarq"
-version = "0.1.0"
+version = "0.2.0"
 description = "CIFAR-10 with a small CNN, trained and tuned through the solve queue (local GPU and Colab VMs)"
+authors = [{ name = "Tristan Hearn" }]
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 dependencies = ["torch>=2.4", "numpy", "huggingface_hub>=0.25", "safetensors"]
 
 [project.optional-dependencies]
-train = ["optuna>=4", "pyarrow", "pillow"]          # training data, the search
-ray = ["ray[tune]>=2.50"]                            # mode 2 driven by Ray Tune (on_vm_ray)
-queue = ["solve-queue[gcs]"]                         # the three run modes (solve-queue: not public)
+train = ["optuna>=4", "pyarrow", "pillow"]          # the data stages, the search
+sf = ["schedulefree"]                                # schedule-free optimisers in the search space
+ray = ["ray[tune]>=2.50"]                            # mode 2 driven by Ray Tune (on_vm_ray), PBT
+app = ["gradio>=5", "pillow"]                        # app/app.py
+test = ["pytest", "optuna>=4", "pyarrow", "pillow"]
+queue = ["solve-queue[gcs]"]                         # pipeline/ on the queue (solve-queue: not public)
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]                               # (not results/publish/: a staged copy of the repository)
+markers = ["queue: runs a job through solve-queue's daemon (skipped unless it is set up)"]
