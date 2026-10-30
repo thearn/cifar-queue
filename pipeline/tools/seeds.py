@@ -55,7 +55,7 @@ def main():
     params.update(parse_sets(a.set))
     out = RESULTS / 'autoresearch' / a.experiment
     out.mkdir(parents=True, exist_ok=True)
-    snap = snapshot(a.experiment)
+    snap, prov = snapshot(a.experiment), provenance()       # (as submitted: commits made while it runs are not its code)
     from common import stage_targets
     targets = stage_targets(a.stage, a.targets)
     t0 = time.time()
@@ -76,7 +76,7 @@ def main():
     stat = lambda k: {'mean': round(statistics.mean(v), 5), 'sd': round(statistics.stdev(v), 5) if len(v) > 1 else None,
                       'min': min(v), 'max': max(v)} if (v := [r[k] for r in runs if r.get(k) is not None]) else None
     summary = {'experiment': a.experiment, 'fn': fn, 'params': params, 'seeds': a.seeds, 'targets': targets,
-               'snapshot': snap, 'provenance': provenance(), 'wall_seconds': round(time.time() - t0, 1),
+               'snapshot': snap, 'provenance': prov, 'wall_seconds': round(time.time() - t0, 1),
                **{k: stat(k) for k in ('val_acc', 'test_acc', 'val_acc_notta', 'test_acc_notta', 'train_seconds')},
                'runs': [{k: v for k, v in r.items() if k != 'hyperparameters'} for r in runs]}
     f = out / f'{time.strftime("%Y%m%d-%H%M%S")}.json'
