@@ -106,8 +106,23 @@ def static(directory) -> dict:
             'macs_per_view': macs, 'views': v, 'macs_per_image': macs * v}
 
 
+class _Null:
+    """The null model of the memory baseline: the same inputs, a constant output, no network."""
+
+    def __init__(self, device):
+        import torch
+        self.device = torch.device(device)
+
+    def predict(self, images):
+        import numpy as np
+        import torch
+        x = torch.from_numpy(np.ascontiguousarray(images)).to(self.device).float()
+        return torch.full((len(images), 10), 0.1, device=self.device).add_(0 * x.mean()).cpu().numpy()
+
+
 def _measure(directory: str, device: str, threads: int, batch: int, warmup: int, timed: int) -> dict:
-    """One setting, in this (fresh) process: peak memory above the floor, and latency or throughput."""
+    """One setting, in this (fresh) process: the process's peak memory (RSS, and GPU allocations), and latency or
+    throughput. ``directory`` ``null`` measures the baseline (``_Null``), which ``measure`` subtracts."""
     import resource
     import time
     import numpy as np
@@ -116,13 +131,12 @@ def _measure(directory: str, device: str, threads: int, batch: int, warmup: int,
         torch.set_num_threads(threads)
     dev = torch.device(device)
     if dev.type == 'cuda':
-        torch.zeros(1, device=dev)                            # (the CUDA context, part of the floor)
+        torch.zeros(1, device=dev)
         torch.cuda.synchronize()
-    floor_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     dtype = torch.bfloat16 if dev.type == 'cuda' else torch.float32
     if dev.type == 'cuda':
         torch.cuda.reset_peak_memory_stats(dev)
-    p = predictor(directory, device, dtype)
+    p = _Null(device) if directory == 'null' else predictor(directory, device, dtype)
     images = np.random.default_rng(0).integers(0, 256, size=(batch, 32, 32, 3), dtype=np.uint8)
     sync = torch.cuda.synchronize if dev.type == 'cuda' else (lambda: None)
     for _ in range(warmup):
@@ -138,23 +152,35 @@ def _measure(directory: str, device: str, threads: int, batch: int, warmup: int,
     out = {'device': device, 'threads': threads or torch.get_num_threads(), 'batch': batch,
            'p50_ms': round(1e3 * float(np.median(times)), 3), 'p95_ms': round(1e3 * float(np.percentile(times, 95)), 3),
            'images_per_s': round(batch / float(np.median(times)), 1),
-           'peak_rss_mb': round((resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - floor_kb) / 1024, 1)}
+           'peak_rss_mb': round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)}
     if dev.type == 'cuda':
         out['peak_gpu_mb'] = round(torch.cuda.max_memory_allocated(dev) / 2 ** 20, 1)
         out['gpu'] = torch.cuda.get_device_name(dev)
     return out
 
 
-def measure(directory, device='cpu', threads: int = 0, batch: int = 1, warmup: int = 20, timed: int = 200) -> dict:
-    """``_measure`` in a fresh interpreter (its memory floor is its own), its result as a dict."""
+def _fresh(directory, device, threads, batch, warmup, timed) -> dict:
     cmd = [sys.executable, '-m', 'cifarq.footprint', str(directory), device, str(threads), str(batch), str(warmup), str(timed)]
     out = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
+def measure(directory, device='cpu', threads: int = 0, batch: int = 1, warmup: int = 20, timed: int = 200) -> dict:
+    """``_measure`` in a fresh interpreter, and the null model's in another: peak memory is the model's process peak
+    minus the null's (the same imports, inputs and CUDA context: what the model itself adds), latency the model's."""
+    r = _fresh(directory, device, threads, batch, warmup, timed)
+    null = _fresh('null', device, threads, batch, 2, 3)
+    r['peak_rss_total_mb'] = r['peak_rss_mb']
+    r['peak_rss_mb'] = round(max(0.0, r['peak_rss_mb'] - null['peak_rss_mb']), 1)
+    if 'peak_gpu_mb' in r:
+        r['peak_gpu_total_mb'] = r['peak_gpu_mb']
+        r['peak_gpu_mb'] = round(max(0.0, r['peak_gpu_mb'] - null.get('peak_gpu_mb', 0.0)), 1)
+    return r
+
+
 SETTINGS = [  # (name, device, threads, batch, warmup, timed)
-    ('gpu_b1', 'cuda', 0, 1, 20, 200), ('gpu_b256', 'cuda', 0, 256, 5, 30), ('gpu_b1024', 'cuda', 0, 1024, 3, 20),
-    ('cpu1_b1', 'cpu', 1, 1, 10, 100), ('cpuall_b1', 'cpu', 0, 1, 10, 100), ('cpuall_b256', 'cpu', 0, 256, 2, 10)]
+    ('gpu_b1', 'cuda', 0, 1, 200, 500), ('gpu_b256', 'cuda', 0, 256, 5, 30), ('gpu_b1024', 'cuda', 0, 1024, 3, 20),
+    ('cpu1_b1', 'cpu', 1, 1, 30, 300), ('cpuall_b1', 'cpu', 0, 1, 30, 300), ('cpuall_b256', 'cpu', 0, 256, 2, 10)]
 
 
 def bench(directory, settings=None, gpu: bool = True) -> dict:
