@@ -59,7 +59,11 @@ account's two VM slots.
 
 - E0.3 (B0 × 5 seeds) on the local 4060, started 2026-10-29 ~21:25 through the queue (`pipeline/tools/seeds.py E0.3 ...`; log in the session's scratchpad). `SOLVEQ_SESSION=fparch`.
 
-## Next action (when the GPUs are free), in order
+## Standing instruction
+
+Push notification to the user when Target A or B is Validated (PLAN.md §7).
+
+## Next action, in order
 
 1. E0.1's GPU rows and repeatability on a quiet machine, with E0.3 (B0 × 5 seeds, local) first since the bench
    needs B0's saved network.

@@ -420,6 +420,10 @@ the cost of each run.
   - Reserve: ~8 units, for resumes after lost VMs, re-runs after a calibration fix, or a Goal B run on the G4.
 - **Per-job limits:** search jobs 45-130 minutes with a study checkpoint every 2 minutes; screens ≤ 15 minutes;
   `--stall-min 10` on waits; Goal B runs checkpoint every 50 epochs and resume from the checkpoint.
+- **Notify the user** (the user, 2026-10-29): when Target A or Target B reaches **Validated** under §2.1 (all of
+  its gates, 5+ seeds), send a push notification at once (the `PushNotification` tool) with the target, the mean
+  test accuracy ± sd over seeds, the stored parameters, and the ledger row; then carry on per the stop rules below.
+  Not for Promising results or single seeds.
 - **Stop when:**
   - the cap is reached and the local queue is empty of decisive work;
   - Target A is Validated, the stretch (≤ 1.5 M) has had one search round without reaching 96 %, and every method
