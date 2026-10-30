@@ -18,17 +18,23 @@ distillation from one airbench96 (weight 0.12). Against B0 (the project's ResNet
 | CIFAR-10.1 v6 (one look; paired CI vs B0) | 89.10 % (+1.10 [−0.10, +2.30]) | 88.35 % (+0.35 [−0.95, +1.60]) | 88.00 % |
 | Stored parameters | 1,944,024 | 1,944,024 | 3,710,611 |
 | Bytes on disk | 7.8 MB | 7.8 MB | 14.9 MB |
-| MACs per image | 559 M | **93 M** | 450 M |
+| MACs per image (corrected 2026-10-30, see below) | 1,424 M | **237 M** | 450 M |
 | GPU p50, batch 1 / throughput, batch 1024 | 10.0 ms / 5.0k img/s | **1.89 ms / 32.3k img/s** | 2.46 ms / 13.9k img/s |
 | CPU p50, 1 thread, batch 1 | 89.7 ms | **13.4 ms** | 13.8 ms |
 | CPU resident memory, batch 1 | 28 MB | 28 MB | 43-48 MB |
 | GPU peak memory, batch 1024 | 588 MB | 571 MB | 552 MB |
 | Footprint class (§2.2) | P | **S** | |
 
+**Correction (2026-10-30, after closing):** the MAC counter (`footprint.count_macs`, revision a3) did not count
+the flip-equivariant convolutions at all, so the finalist's MACs were reported as 93 M a view (559 M at 6 views).
+Recounted with revision a4 (commit f565ddd on `eqsm/M1`): **237 M a view, 1,424 M at 6 views**. The single-view
+variant does 1.9× fewer MACs than B0's two views, not 4.8×. Latency, throughput, memory, parameters, bytes and the
+footprint classes were measured directly and are unaffected.
+
 Both variants beat B0 by the session's win rule: ≥ 5 seeds, Δ ≥ 0.20 pp, Welch p < 0.05, the bootstrap interval
 above zero, and the same sign on validation. The single-view variant also passes the strict class: no larger than B0
 on any footprint axis and faster than B0 on every runtime row. The six-view variant buys a further 0.45 pp with 6× the
-MACs. Its GPU peak at batch 1024 is 6 % over B0's, so it is in the parameter class only.
+MACs (3.2× B0's). Its GPU peak at batch 1024 is 6 % over B0's, so it is in the parameter class only.
 
 On CIFAR-10.1, all three models lose about 6.5 pp against CIFAR-10 test, and they keep the same order. With 2,000
 images, the intervals include zero, as expected.
