@@ -44,6 +44,8 @@ def test_distillation_from_a_saved_teacher(built, tmp_path):
     teacher = airbench.train(**SMALL, save=str(tmp_path / 'teacher'))
     r = airbench.train(**SMALL, kd_teacher=teacher['saved'], kd_weight=0.5)
     assert np.isfinite(r['history'][-1]['loss'])
+    r = airbench.train(**SMALL, kd_teacher=f"{teacher['saved']},{teacher['saved']}", kd_weight=0.5)   # an ensemble
+    assert np.isfinite(r['history'][-1]['loss'])
 
 
 @pytest.mark.parametrize('arch,kw', [('convmixer', {'dim': 32, 'depth': 2, 'kernel': 5, 'patch': 2}),

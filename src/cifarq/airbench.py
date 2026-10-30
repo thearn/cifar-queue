@@ -20,7 +20,7 @@ down-right (6 views, the shifted ones at half weight).
 
 Additions, off by default: ``train_on='train+val'`` (all 50000 images, the published setting, for a record-format
 run: the validation accuracy is then on trained images and only reported), and distillation from a teacher saved by
-``train(save=...)`` (``kd_teacher``: its directory; ``kd_weight`` of the loss is the KL divergence to its softened
+``train(save=...)`` (``kd_teacher``: its directory, or several separated by commas for an ensemble; ``kd_weight`` of the loss is the KL divergence to its softened
 predictions at ``kd_temp``, the teacher run on each augmented batch).
 """
 from __future__ import annotations
@@ -283,14 +283,17 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     for m in net.modules():
         if isinstance(m, nn_batchnorm()):
             m.float()
-    teacher = None
+    teachers = []
     if h['kd_teacher'] and h['kd_weight'] > 0:
-        teacher, _ = load(h['kd_teacher'], device=dev)
-        # (the student's precision: on a GPU at fp16 the batches are fp16, which fp32 weights refuse)
-        teacher = teacher.to(dtype).to(memory_format=torch.channels_last).eval()
-        for m in teacher.modules():
-            if isinstance(m, nn_batchnorm()):
-                m.float()
+        # one directory, or several separated by commas: an ensemble, its softened predictions averaged
+        for d in str(h['kd_teacher']).split(','):
+            t, _ = load(d.strip(), device=dev)
+            # (the student's precision: on a GPU at fp16 the batches are fp16, which fp32 weights refuse)
+            t = t.to(dtype).to(memory_format=torch.channels_last).eval()
+            for m in t.modules():
+                if isinstance(m, nn_batchnorm()):
+                    m.float()
+            teachers.append(t)
 
     bs, n = h['batch_size'], len(y_train)
     steps_per_epoch = n // bs
@@ -367,9 +370,9 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
         with amp():
             out = net(xb)
         per = loss_fn(out.float() if h['precision'] == 'amp' else out, yb)     # (fp16: airbench's own, in fp16)
-        if teacher is not None:
+        if teachers:
             with torch.no_grad(), amp():
-                soft = F.softmax(teacher(xb).float() / h['kd_temp'], 1)
+                soft = sum(F.softmax(t(xb).float() / h['kd_temp'], 1) for t in teachers) / len(teachers)
             logp = F.log_softmax(out.float() / h['kd_temp'], 1)
             kl = (soft * (soft.clamp_min(1e-8).log() - logp)).sum(1) * h['kd_temp'] ** 2
             per = (1 - h['kd_weight']) * per.float() + h['kd_weight'] * kl

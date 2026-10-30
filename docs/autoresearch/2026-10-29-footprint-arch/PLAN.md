@@ -448,3 +448,39 @@ is never idle while a VM search runs, and prefers the method screen that would c
 
 Search order on the two VMs, most likely gains first: A1 + A2; A3 + A6; then A8/A9 as their screens justify; then
 the cross-family study. Re-prioritise after each pair, in the ledger.
+
+## 9. Revision 2026-10-30: the pivot after M3's first family (the user: "pivot the plan as you see fit")
+
+**Evidence.** Two airbench studies (~420 trials, ~12.5 units) saturated at 95.6 % val, about 95.1 % test, from one
+seed each. Neither distillation from one airbench96 (95.9 % val) nor wider ranges moved it. Target A needs a mean of
+96.0 % test, so the gap is about 0.9 pp, and further recipe search inside a family will not close it: the top 12 trials
+lie within 0.22 pp. M2's other families are below airbench untuned, except PyramidNet-110 (95.18 % val, 0.3 pp
+under).
+
+**What changes.** The budget moves from exhaustive per-family recipe search to levers that can plausibly be worth tenths
+of a point at a fixed 2 M parameters and 40 epochs, each screened locally first against the airbench top-5 3-seed
+retrains (seeds 1-3, the baseline), and only then searched on the G4:
+
+1. **P1 Stronger teachers.** Distillation needs a teacher-student gap. A single airbench96 is 0.3 pp above the student.
+   The ensemble of the three saved airbench96 45k models (averaged softened predictions; `kd_teacher` takes
+   comma-separated directories) is the first step. If its validation is ≥ 96.3 %, it is screened at the p1-t84
+   configuration, 3 paired seeds. Teacher training is not charged to the student's 40 epochs (as in §5's R1). If the
+   ensemble is too weak, longer-trained teachers come next (airbench96 at 80 epochs, locally).
+2. **P2 Method screens, reordered by expected value under a parameter cap:**
+   - MT1 flip-equivariant convolutions at matched stored parameters (flip_eq 1 at 128/128/144: 1.68 M; flip_eq 2 at
+     128/96/144: 1.76 M), since equivariance doubles the effective features per stored weight;
+   - MT2 trunk-and-tails averaging (charged epochs equal);
+   - MT6/TTA: views beyond level 2 (inference compute is not capped; peak memory is, and is checked by the bench).
+   MT3-MT5 follow only if one of these gives ≥ 0.15 pp.
+3. **PyramidNet study** (running when this was written; 50 minutes on the G4). If its best beats airbench's 95.64 %,
+   it gets the same retrain and becomes the base for P1/P2.
+4. **G4 spend after this** goes to one combined study, with the winning levers fixed or in the space, on the best
+   family. Nothing more is spent on airbench-only recipe search.
+
+**Unchanged.** Goal A's rules, the evaluator, the win rules, the hold-out, and the 50-unit cap (12.0 units spent
+before the PyramidNet study).
+
+**Stop rule for Target A.** If P1 and P2 together lift the 3-seed val mean by less than 0.3 pp over the baseline, the
+agent reports that 96.0 % at 2 M and 40 epochs on 45k is out of reach with these tools. It then writes up the best
+validated point as the session's Goal A result, stating its Δ to B0 and the footprint classes, and asks the user
+before going further.
