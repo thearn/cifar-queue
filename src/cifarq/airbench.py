@@ -259,6 +259,10 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     dev = torch.device(('cuda' if torch.cuda.is_available() else 'cpu') if device == 'auto' else device)
     torch.backends.cudnn.benchmark = True
     dtype = torch.float16 if h['precision'] == 'fp16' and dev.type == 'cuda' else torch.float32
+    # 'amp': fp32 weights (the optimiser's state too), the arithmetic under bf16 autocast: for AdamW and for networks
+    # whose fp16 activations overflow; 'fp16' is airbench's own (fp16 weights, batch norm fp32); 'fp32' neither
+    import contextlib
+    amp = (lambda: torch.autocast(dev.type, dtype=torch.bfloat16)) if h['precision'] == 'amp' else contextlib.nullcontext
 
     arrays = dataset.load(data)
     gpu = lambda a: torch.from_numpy(np.ascontiguousarray(a)).to(dev)
@@ -323,7 +327,7 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
         """(accuracy at ``level``'s views, the share of images given them: 1 unless MT6's ``gate`` is set)."""
         from .methods import gated_logits
         net.eval()
-        with torch.no_grad():
+        with torch.no_grad(), amp():
             if gate > 0 and level > 0:
                 parts = [gated_logits(net, xb, level, gate, tta_logits) for xb in x.split(2000)]
                 logits = torch.cat([p_[0] for p_ in parts])
@@ -356,10 +360,11 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     st = {'step': 0, 'history': [], 'pruned': False}
 
     def batch_loss(xb, yb):
-        out = net(xb)
-        per = loss_fn(out, yb)
+        with amp():
+            out = net(xb)
+        per = loss_fn(out.float() if h['precision'] == 'amp' else out, yb)     # (fp16: airbench's own, in fp16)
         if teacher is not None:
-            with torch.no_grad():
+            with torch.no_grad(), amp():
                 soft = F.softmax(teacher(xb).float() / h['kd_temp'], 1)
             logp = F.log_softmax(out.float() / h['kd_temp'], 1)
             kl = (soft * (soft.clamp_min(1e-8).log() - logp)).sum(1) * h['kd_temp'] ** 2
