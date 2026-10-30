@@ -16,7 +16,8 @@
 (MT2, trunk-and-tails averaging, and MT5, weight-tied depth, live in ``airbench.train`` and ``airbench.model``.)
 
 Session 2026-10-30-equivariant-small adds ``P4MConv`` and ``GroupMaxPool`` (Q1: the flips and quarter turns, D4) and
-``MaxBlurPool`` (Q2: anti-aliased downsampling), ``FieldSE`` (O2), and structured receptive fields (``use_srf``, Q4).
+``MaxBlurPool`` (Q2: anti-aliased downsampling), ``FieldSE`` (O2), structured receptive fields (``use_srf``, Q4) and
+the Muon optimizer for the filters (``MuonSGD``, O4).
 """
 from __future__ import annotations
 
@@ -202,6 +203,49 @@ def use_srf(net) -> int:
             parametrize.register_parametrization(m, 'weight', SRFKernel())
             n += 1
     return n
+
+
+def newton_schulz(g, steps: int = 5):
+    """An approximate orthogonalisation of a matrix (the quintic Newton-Schulz iteration of Muon, Jordan 2024)."""
+    a, b, c = 3.4445, -4.7750, 2.0315
+    x = g.bfloat16()
+    x = x / (x.norm() + 1e-7)
+    tall = x.size(0) > x.size(1)
+    if tall:
+        x = x.T
+    for _ in range(steps):
+        m = x @ x.T
+        x = a * x + (b * m + c * m @ m) @ x
+    return (x.T if tall else x).to(g.dtype)
+
+
+class MuonSGD(torch.optim.Optimizer):
+    """Muon for the groups marked ``muon`` (each update the orthogonalised Nesterov momentum of a weight viewed as
+    (out, in x k x k), scaled by sqrt(max(1, out/in))), Nesterov SGD with coupled weight decay for the rest
+    (``torch.optim.SGD``'s rule), so one scheduler drives both (airbench94_muon's split: Muon for the convolution
+    filters, SGD for the norms and the head). The session's O4."""
+
+    def __init__(self, groups, momentum: float = 0.85, muon_momentum: float = 0.6):
+        super().__init__(groups, dict(lr=1.0, weight_decay=0.0, muon=False))
+        self.momentum, self.muon_momentum = momentum, muon_momentum
+
+    @torch.no_grad()
+    def step(self):
+        for g in self.param_groups:
+            mu = self.muon_momentum if g['muon'] else self.momentum
+            for p in g['params']:
+                if p.grad is None:
+                    continue
+                d = p.grad.float()
+                if not g['muon'] and g['weight_decay']:
+                    d = d + g['weight_decay'] * p.float()
+                buf = self.state[p].setdefault('buf', torch.zeros_like(d))
+                buf.mul_(mu).add_(d)
+                d = d + mu * buf
+                if g['muon']:
+                    flat = d.reshape(d.size(0), -1)              # (filters are channels_last: reshape, not view)
+                    d = newton_schulz(flat).reshape(d.shape) * max(1.0, flat.size(0) / flat.size(1)) ** 0.5
+                p.add_(d.to(p.dtype), alpha=-g['lr'])
 
 
 def _convs_in_order(net):

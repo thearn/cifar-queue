@@ -44,7 +44,8 @@ DEFAULTS = dict(
     arch='airbench', arch_kw={}, bn_scale=False, param_cap=0, tie=0, flip_eq=0, pca_init=False, tails=0,
     tail_epochs=3, kd_weighting='none', tta_gate=0.0, optimizer='sgd', beta2=0.99, augment='none', augment_m=9,
     train_on='train', kd_teacher='', kd_weight=0.0, kd_temp=4.0, precision='fp16', eq_group='d1', blur_pool=False,
-    se=0, srf=False, filter_keep=1.0, filter_proxy_widths=(32, 64, 64), filter_proxy_epochs=0.0,
+    se=0, srf=False, filter_keep=1.0, filter_proxy_widths=(32, 64, 64), filter_proxy_epochs=0.0, muon_lr=0.24,
+    muon_momentum=0.6,
     test='open',
     seed=0)
 
@@ -342,8 +343,16 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
         opt = torch.optim.AdamW([dict(params=biases, lr=h['lr'], weight_decay=0.0),
                                  dict(params=others, lr=h['lr'], weight_decay=h['weight_decay'])],
                                 betas=(h['momentum'], h['beta2']), eps=1e-6 if dtype == torch.float16 else 1e-8)
+    elif h['optimizer'] == 'muon':                           # (O4: Muon for the filters, the SGD above for the rest)
+        from .methods import MuonSGD
+        filters = [p for p in others if p.dim() == 4]
+        rest = [p for p in others if p.dim() != 4]
+        opt = MuonSGD([dict(params=biases, lr=lr_b, weight_decay=wd / lr_b),
+                       dict(params=rest, lr=lr, weight_decay=wd / lr),
+                       dict(params=filters, lr=h['muon_lr'], muon=True)], momentum=h['momentum'],
+                      muon_momentum=h['muon_momentum'])
     else:
-        raise ValueError(f"optimizer: 'sgd' or 'adamw', not {h['optimizer']!r}")
+        raise ValueError(f"optimizer: 'sgd', 'adamw' or 'muon', not {h['optimizer']!r}")
     warm = int(total * h['warmup_frac'])
 
     def lr_factor(step):
@@ -418,7 +427,7 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
             if h['kd_weighting'] != 'none':                  # (MT4)
                 from .methods import kd_weights
                 per = per * kd_weights(kl, h['kd_weighting'])
-        return per.sum() if h['optimizer'] == 'sgd' else per.mean()
+        return per.sum() if h['optimizer'] in ('sgd', 'muon') else per.mean()
 
     def run(epochs):
         """Train over ``epochs`` (a range of epoch indices) of the schedule; False when the run should stop."""
@@ -451,7 +460,7 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
                     if ahead is not None:
                         lookahead(1.0)
                     break
-            mean_loss = (loss_sum / max(1, i + 1) / (bs if h['optimizer'] == 'sgd' else 1)).item()
+            mean_loss = (loss_sum / max(1, i + 1) / (bs if h['optimizer'] in ('sgd', 'muon') else 1)).item()
             st['history'].append({'epoch': epoch + 1, 'loss': round(mean_loss, 4),
                                   'val_acc': round(accuracy(x_val, y_val, 0)[0], 4), 'seconds': round(time.time() - t0, 1)})
             # (a line an epoch: the job's log grows while it trains, so the queue's stall check means something)
