@@ -1,6 +1,8 @@
 # Status: 2026-10-30-equivariant-small
 
-Updated 2026-10-30. Phase: **session complete; result in `RESULT.md`. Waiting for the user to confirm the session is done (then branch cleanup, PLAN §3).**
+Updated 2026-10-30. Phase: **closed 2026-10-30.** The user confirmed completion; merged into `master` (d038811) and pushed; the session branches
+(`eqsm/*`, and the previous session's `fparch/*`) deleted, all merged, so their commits stay reachable from `master`. The
+53 `refs/autoresearch/*` snapshot refs (exact trees the result files cite) are kept locally.
 
 ## Objective
 
@@ -102,7 +104,4 @@ one view (20 / 40 / 100 epochs).
 
 ## Next action, in order
 
-1. The user confirms the session is complete.
-2. Then (PLAN §3): delete the merged branches (`eqsm/M1`, `eqsm/O4-muon`, `eqsm/fix-se`, `eqsm/M5-space`,
-   `eqsm/M6-tools`) and keep any unmerged tip as `refs/autoresearch/archive/<branch>` with its SHA in the ledger.
-   Merging `eqsm/main` into `master`, pushing and publishing only with the user's say-so.
+None. Open options for a later session are in `RESULT.md`.
