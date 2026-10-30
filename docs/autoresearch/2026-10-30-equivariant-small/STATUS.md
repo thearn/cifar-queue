@@ -1,10 +1,10 @@
 # Status: 2026-10-30-equivariant-small
 
-Updated 2026-10-30. Phase: **plan written; nothing built or run. Waiting for the user's go and the unit budget.**
+Updated 2026-10-30. Phase: **plan agreed (75 units, E* ≤ 150); M0 and M1 next.**
 
 ## Objective
 
-≥ 96.0 % CIFAR-10 test, ≤ 2 M stored parameters, one forward pass per image (no TTA), ≤ 100 epochs on the 45k split
+≥ 96.0 % CIFAR-10 test, ≤ 2 M stored parameters, one forward pass per image (no TTA), ≤ E* epochs on the 45k split (E* from M2, 80-150)
 (`PLAN.md` §1), with the equivariance-vs-TTA measurement (H1) as the method result. Start point: the last session's
 finalist at 95.00 ± 0.08 % (one view) / 95.45 ± 0.17 % (6 views), 1.94 M, 40 epochs.
 
@@ -23,7 +23,7 @@ finalist at 95.00 ± 0.08 % (one view) / 95.45 ± 0.17 % (6 views), 1.94 M, 40 e
 
 ## Budget
 
-- Colab: 50 units assumed (to confirm); spent 0. Balance at the last reading 862.40 (2026-10-30 ~06:25). Local unlimited.
+- Colab: 75 units (the user, 2026-10-30); spent 0. Balance at the last reading 862.40 (2026-10-30 ~06:25). Local unlimited.
 
 ## Jobs
 
@@ -38,7 +38,7 @@ None.
 
 ## Next action, in order
 
-1. User confirms the budget and the 100-epoch cap (or a revision).
+1. (Done) Budget 75 units; epoch cap set by M2 within 80-150.
 2. M0: the four open items in `literature.md` §6.
 3. M1: `test='sealed'`, the two-seed objective, the p4m layer, BlurPool, the MAC-count test; the regression gate.
 4. M2 on the G4: the epoch curve (`experiments/M2-epoch-curve/protocol.md`, to freeze at launch).

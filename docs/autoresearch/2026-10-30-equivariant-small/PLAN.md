@@ -28,17 +28,24 @@ session `2026-10-29-footprint-arch`'s integration branch, which carries all the 
   airbench96_faster, 96.00 % at 9.9 M, 45 epochs, 6 views, half-batch proxy filtering; ConvMixer-256/12 and /16,
   96.4-96.7 % at 1.0-1.3 M, 200 epochs, RandAugment + mixup + cutmix + erasing; p4m-ResNet44 variants, 1.9-2.6 M,
   93-95 % at long schedules; the previous session's 95.45 % (6 views) / 95.00 % (1 view) at 1.94 M, 40 epochs.
-  **Nothing found at ≤ 2 M parameters, ≤ 100 epochs and ≥ 96 % with a single view.** The one-view condition is what
+  **Nothing found at ≤ 2 M parameters, under 200 epochs and ≥ 96 % with a single view.** The one-view condition is what
   makes this a different point from airbench96 at a fifth of its parameters and a tenth of its inference MACs
   (93 M against 9.9 M × 6 views).
 - **Target is met when** (all hold, §2.1): ≥ 5 seeds on one card type, mean test ≥ 96.00 % with the one-sided 95 %
   lower bound ≥ 95.80 %; ≤ 2,000,000 stored parameters; `tta_level` 0 (one forward pass, no mirror, no shifts);
-  ≤ **100 epochs** of the 45k split (§2.1 defines an epoch); the strict footprint class against B0; validation ≥
+  ≤ **E\* epochs** of the 45k split, E\* set by M2 within 80-150 (§2.1 defines an epoch); the strict footprint class against B0; validation ≥
   96.0 %; CIFAR-10.1 within airbench96's interval. The record-format run (50k, no selection) is reported beside it.
-- **Why 100 epochs:** the last session showed 40 is binding and M2 here measures the curve. 100 keeps the result in
-  the short-schedule regime (ConvMixer's 200 and the ResNet literature's 300 are the long one) and keeps one training
-  under a minute on the G4. If M2 shows 96 % is not crossed by 160 epochs even at 6 views, the target is revised
-  before any further spend (§6, readout after M2).
+- **The epoch cap E\* (decided with the user 2026-10-30): set by M2, at most 150.**
+  - *The ceiling is set by novelty, not cost.* ConvMixer-256/12 already has 96.39 % at 1.0 M parameters with one view
+    at 200 epochs. At ≥ 200 epochs the target is documented, so the cap must stay well below it to be a new point;
+    150 leaves a clear 25 % gap and keeps "short schedule" honest (airbench96 uses 37-45).
+  - *The floor is set by evidence.* 40 epochs was binding last session; 80 is the smallest budget worth a G4 search.
+  - *Within that range, lower is the stronger claim*, and every search trial costs in proportion to epochs (~45 s at
+    100 on the G4, ~70 s at 150), so E\* is the smallest grid point in M2 where the finalist's one-view validation
+    mean reaches 95.7 % (the level a search plus methods can plausibly close by 0.3 pp), rounded up to 80, 100,
+    120 or 150. Frozen once chosen; every later comparison uses it.
+  - *If 150 does not reach 95.7 % at one view*, the target is revised with the user before M3 (candidates: six
+    views allowed, or ≤ 3 M parameters).
 
 ### Method goal: equivariance as the substitute for augmentation and test-time augmentation at matched inference cost
 
@@ -143,9 +150,9 @@ epochs on the 4060 matching the pre-change validation accuracy exactly.
   Measured rate **10.05 units an hour** (europe-west4, 2026-10-30; `solveq colab rates` samples it); a 40-epoch
   airbench training took ~20 s there, ~180 an hour, one at a time (calibration found no gain from two). Equivariant
   layers in the last two groups cost ~2-4× those groups' MACs, so expect 25-40 s at 40 epochs and 60-100 s at 100.
-- **Budget:** 50 units unless the user sets otherwise (to confirm at launch), tracked as the fall of the Colab
-  balance while only this session's VM is up, `solveq colab hours` as the check. Rough split: M2 ~2, M3 ~4, M5 two
-  studies ≤ 12 each, M7 ~6, reserve ~8. Nothing on the G4 before M2's readout.
+- **Budget:** 75 units (the user, 2026-10-30), tracked as the fall of the Colab
+  balance while only this session's VM is up, `solveq colab hours` as the check. Split: M2 ~3, M3 ~6, M5 two studies
+  ≤ 20 each, M7 ~8, M6's record-format runs local, reserve ~15 (resumes, a cold restart, a longer M2 point). Nothing on the G4 before M2's readout.
 - **Targets, as before:** GPU busy ≥ 90 % over each VM job (under 80 %: stop, diagnose, resume the study); VM idle
   ≤ 2 minutes between jobs; `--check` before every submission. A VM job never starts without the watcher running.
 
@@ -197,7 +204,7 @@ Ensemble teachers, tails, > 6 views (last session's nulls).
   finalist's one-view validation crosses 96.0 %, if any. If it does not cross by 160 at 6 views, the target is
   revised with the user before M3 (candidates: 6 views allowed, or ≤ 3 M parameters).
 - **M3 H1 curves (G4, ~4 units):** Q1's three equivariance patterns and Q2, against plain + 2 views and plain + 6
-  views, at matched parameters and at matched MACs, at 20, 40 and 100 epochs, 3 seeds. **Readout:** the method
+  views, at matched parameters and at matched MACs, at 20, 40 and E\* epochs, 3 seeds. **Readout:** the method
   result stands or is null. If no equivariant arm beats plain + TTA at matched MACs by ≥ 0.15 pp at any budget, H1
   is reported null and the target rests on §5.2-5.3 plus the recipe; the session continues either way.
 - **M4 Screens (local, ~2 days):** Q4, O1-O4, D1, D2 on the best M3 arm at the M2 epoch budget, 3 paired seeds each,
