@@ -57,7 +57,18 @@ def convmixer_space(trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str
     return {**p, **recipe(trial, max_epochs, kd), 'param_cap': cap}
 
 
-SPACES = {'airbench': airbench_space, 'resnet9': resnet9_space, 'convmixer': convmixer_space}
+def pyramidnet_space(trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
+    """PyramidNet (M2: depth 110, alpha 48, 1.77 M, 95.18 % val untuned): blocks a stage (depth 6n + 2, or 9n + 2
+    with bottlenecks), the widening alpha."""
+    c = trial.suggest_categorical
+    bottleneck, n = c('bottleneck', [False, True]), trial.suggest_int('pn_n', 3, 21)
+    p = {'arch': 'pyramidnet', 'arch_kw': {'depth': (9 if bottleneck else 6) * n + 2, 'bottleneck': bottleneck,
+                                           'alpha': c('alpha', [24, 32, 48, 64, 84, 100, 128, 160])}}
+    return {**p, **recipe(trial, max_epochs, kd), 'param_cap': cap}
+
+
+SPACES = {'airbench': airbench_space, 'resnet9': resnet9_space, 'convmixer': convmixer_space,
+          'pyramidnet': pyramidnet_space}
 
 # airbench94's recipe (1.97 M, widths 64/256/256) as a point of the airbench space, at the cap's epochs
 _AB94 = {'depth': 2, 'w1': 64, 'w2': 256, 'w3': 256, 'epochs': 9.9, 'batch_size': 1024, 'lr': 11.5, 'momentum': 0.85,
@@ -72,7 +83,10 @@ WARM = {'airbench': [{**_R96, 'depth': 3, 'w2': 192, 'w3': 192}, {**_R96, 'depth
         'resnet9': [{**{k: v for k, v in _AB94.items() if k not in ('depth', 'w1', 'w2', 'w3')}, 'width': 32,
                      'activation': 'gelu', 'epochs': 30.0}],
         'convmixer': [{**{k: v for k, v in _AB94.items() if k not in ('depth', 'w1', 'w2', 'w3')}, 'dim': 256, 'cm_depth': 8,
-                       'kernel': 5, 'patch': 2, 'epochs': 30.0, 'augment': 'randaugment', 'augment_m': 12}]}
+                       'kernel': 5, 'patch': 2, 'epochs': 30.0, 'augment': 'randaugment', 'augment_m': 12}],
+        'pyramidnet': [{**{k: v for k, v in _R96.items() if k not in ('depth', 'w1', 'w2', 'w3')}, 'bottleneck': False,
+                        'pn_n': 18, 'alpha': 48, 'batch_size': 256}]}
 CALIBRATE = {'airbench': {'epochs': 2, 'widths': (64, 256, 256)},
              'resnet9': {'epochs': 2, 'arch': 'resnet9', 'arch_kw': {'width': 32}},
-             'convmixer': {'epochs': 1, 'arch': 'convmixer', 'arch_kw': {'dim': 256, 'depth': 8, 'kernel': 5, 'patch': 2}}}
+             'convmixer': {'epochs': 1, 'arch': 'convmixer', 'arch_kw': {'dim': 256, 'depth': 8, 'kernel': 5, 'patch': 2}},
+             'pyramidnet': {'epochs': 1, 'arch': 'pyramidnet', 'arch_kw': {'depth': 110, 'alpha': 48}, 'batch_size': 256}}
