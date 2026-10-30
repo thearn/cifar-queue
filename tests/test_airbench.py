@@ -32,7 +32,8 @@ def test_unknown_hyperparameters_are_refused(built):
         airbench.train(epochs=1, width=16)
 
 
-@pytest.mark.parametrize('extra', [{'depth': 3, 'cutout': 4, 'translate': 4}, {'train_on': 'train+val', 'tta_level': 1}])
+@pytest.mark.parametrize('extra', [{'depth': 3, 'cutout': 4, 'translate': 4}, {'train_on': 'train+val', 'tta_level': 1},
+                                   {'tta_level': 3, 'flip_eq': 2}])
 def test_saved_network_predicts_what_training_measured(built, tmp_path, extra):
     r = airbench.train(**SMALL, **extra, save=str(tmp_path / 'model'))
     probs = airbench.Predictor(r['saved']).predict(built['x_test'])
@@ -43,6 +44,8 @@ def test_saved_network_predicts_what_training_measured(built, tmp_path, extra):
 def test_distillation_from_a_saved_teacher(built, tmp_path):
     teacher = airbench.train(**SMALL, save=str(tmp_path / 'teacher'))
     r = airbench.train(**SMALL, kd_teacher=teacher['saved'], kd_weight=0.5)
+    assert np.isfinite(r['history'][-1]['loss'])
+    r = airbench.train(**SMALL, kd_teacher=f"{teacher['saved']},{teacher['saved']}", kd_weight=0.5)   # an ensemble
     assert np.isfinite(r['history'][-1]['loss'])
 
 

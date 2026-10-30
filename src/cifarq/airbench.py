@@ -20,7 +20,7 @@ down-right (6 views, the shifted ones at half weight).
 
 Additions, off by default: ``train_on='train+val'`` (all 50000 images, the published setting, for a record-format
 run: the validation accuracy is then on trained images and only reported), and distillation from a teacher saved by
-``train(save=...)`` (``kd_teacher``: its directory; ``kd_weight`` of the loss is the KL divergence to its softened
+``train(save=...)`` (``kd_teacher``: its directory, or several separated by commas for an ensemble; ``kd_weight`` of the loss is the KL divergence to its softened
 predictions at ``kd_temp``, the teacher run on each augmented batch).
 """
 from __future__ import annotations
@@ -164,13 +164,17 @@ def whiten_init(layer, x, eps: float):
 
 
 def tta_logits(net, x, level: int):
-    """Logits of normalised images ``x`` averaged over ``level``'s views (0: 1 view, 1: 2, 2: 6)."""
+    """Logits of normalised images ``x`` averaged over ``level``'s views (0: 1 view, 1: 2, 2: 6; 3: 18, every shift of
+    -2, 0 or 2 pixels each way, mirrored: the session's P2, inference compute being uncapped)."""
     import torch.nn.functional as F
     mirror = lambda v: 0.5 * net(v) + 0.5 * net(v.flip(-1))
     if level == 0:
         return net(x)
     if level == 1:
         return mirror(x)
+    if level >= 3:
+        padded = F.pad(x, (2,) * 4, 'reflect')
+        return sum(mirror(padded[:, :, dy:dy + 32, dx:dx + 32]) for dy in (0, 2, 4) for dx in (0, 2, 4)) / 9
     padded = F.pad(x, (1,) * 4, 'reflect')
     shifted = 0.5 * (mirror(padded[:, :, 0:32, 0:32]) + mirror(padded[:, :, 2:34, 2:34]))
     return 0.5 * mirror(x) + 0.5 * shifted
@@ -283,14 +287,17 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     for m in net.modules():
         if isinstance(m, nn_batchnorm()):
             m.float()
-    teacher = None
+    teachers = []
     if h['kd_teacher'] and h['kd_weight'] > 0:
-        teacher, _ = load(h['kd_teacher'], device=dev)
-        # (the student's precision: on a GPU at fp16 the batches are fp16, which fp32 weights refuse)
-        teacher = teacher.to(dtype).to(memory_format=torch.channels_last).eval()
-        for m in teacher.modules():
-            if isinstance(m, nn_batchnorm()):
-                m.float()
+        # one directory, or several separated by commas: an ensemble, its softened predictions averaged
+        for d in str(h['kd_teacher']).split(','):
+            t, _ = load(d.strip(), device=dev)
+            # (the student's precision: on a GPU at fp16 the batches are fp16, which fp32 weights refuse)
+            t = t.to(dtype).to(memory_format=torch.channels_last).eval()
+            for m in t.modules():
+                if isinstance(m, nn_batchnorm()):
+                    m.float()
+            teachers.append(t)
 
     bs, n = h['batch_size'], len(y_train)
     steps_per_epoch = n // bs
@@ -367,9 +374,9 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
         with amp():
             out = net(xb)
         per = loss_fn(out.float() if h['precision'] == 'amp' else out, yb)     # (fp16: airbench's own, in fp16)
-        if teacher is not None:
+        if teachers:
             with torch.no_grad(), amp():
-                soft = F.softmax(teacher(xb).float() / h['kd_temp'], 1)
+                soft = sum(F.softmax(t(xb).float() / h['kd_temp'], 1) for t in teachers) / len(teachers)
             logp = F.log_softmax(out.float() / h['kd_temp'], 1)
             kl = (soft * (soft.clamp_min(1e-8).log() - logp)).sum(1) * h['kd_temp'] ** 2
             per = (1 - h['kd_weight']) * per.float() + h['kd_weight'] * kl
@@ -472,7 +479,7 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
         return {'val_acc': history[-1]['val_acc'], 'pruned': True, 'progress': round(100 * step / total), **common}
     val, val_share = accuracy(x_val, y_val, h['tta_level'], h['tta_gate'])
     test, test_share = accuracy(x_test, y_test, h['tta_level'], h['tta_gate'])
-    views = {0: 1, 1: 2, 2: 6}[h['tta_level']]
+    views = {0: 1, 1: 2, 2: 6, 3: 18}[h['tta_level']]
     out = {'val_acc': round(val, 4), 'val_acc_notta': round(accuracy(x_val, y_val, 0)[0], 4), 'test_acc': round(test, 4),
            'test_acc_notta': round(accuracy(x_test, y_test, 0)[0], 4),
            'views_per_image': round(1 + views * test_share, 3) if h['tta_gate'] > 0 and h['tta_level'] else views, **common}

@@ -57,7 +57,7 @@ def views(directory) -> int:
     cfg = json.loads((Path(directory) / 'config.json').read_text())
     if family(directory) == 'resnet9':
         return 2 if cfg.get('tta_flip') else 1
-    return {0: 1, 1: 2, 2: 6}[int(cfg.get('tta_level', 0))]
+    return {0: 1, 1: 2, 2: 6, 3: 18}[int(cfg.get('tta_level', 0))]       # (level 3: added 2026-10-30, P2)
 
 
 def count_macs(net, shape=(1, 3, 32, 32)) -> int:
