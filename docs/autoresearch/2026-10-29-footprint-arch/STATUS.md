@@ -40,6 +40,9 @@ account's two VM slots.
 
 ## Baselines
 
+- **The bench is frozen** (E0.1, revision a3, merge 1b6540c). B0's row: 3,710,611 stored params (3,709,882 trainable),
+  14.86 MB, 450 M MACs an image (flip TTA); GPU bf16 p50 2.51 / 20.2 / 82.3 ms at batch 1 / 256 / 1024, peak GPU
+  17.8 / 149.4 / 552.3 MB; CPU p50 15.2 ms (1 thread, b1), 7.7 ms (all, b1); resident 43 MB at b1.
 - **B0** (local footprint reference): `results/g4-best.json`; 3,709,882 trainable params. On the 4060 (E0.3, 5 seeds):
   **94.60 ± 0.11 % test**, 94.68 ± 0.15 % validation (G4, 3 seeds: 94.57 %). Saved network (seed 4, median
   validation): `results/models/B0`.
@@ -58,7 +61,7 @@ account's two VM slots.
 
 ## Jobs
 
-- E0.1: the bench on B0, 5 repeats, local (quiet GPU needed: nothing else is submitted until it ends).
+- E1.2 (airbench94: 2 seeds on 50k, then 3 on 45k/5k, saved), local 4060, started ~21:45.
 
 ## Standing instruction
 
