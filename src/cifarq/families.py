@@ -14,7 +14,7 @@ TRAIN = 'cifarq.airbench:train'
 
 def recipe(trial, max_epochs: float = 40, kd: str = '') -> dict:
     s, c = trial.suggest_float, trial.suggest_categorical
-    p = {'epochs': s('epochs', 8.0, max_epochs), 'batch_size': c('batch_size', [256, 512, 1024]),
+    p = {'epochs': s('epochs', 20.0, max_epochs), 'batch_size': c('batch_size', [256, 512, 1024]),
          'lr': s('lr', 2.0, 30.0, log=True), 'momentum': s('momentum', 0.7, 0.95),
          'weight_decay': s('weight_decay', 0.003, 0.05, log=True), 'bias_scaler': s('bias_scaler', 4.0, 128.0, log=True),
          'label_smoothing': s('label_smoothing', 0.0, 0.3), 'warmup_frac': s('warmup_frac', 0.02, 0.3),
@@ -62,8 +62,11 @@ _AB94 = {'depth': 2, 'w1': 64, 'w2': 256, 'w3': 256, 'epochs': 9.9, 'batch_size'
          'weight_decay': 0.0153, 'bias_scaler': 64.0, 'label_smoothing': 0.2, 'warmup_frac': 0.23, 'final_lr_frac': 0.07,
          'bn_momentum': 0.4, 'translate': 2, 'cutout': 0, 'whiten_bias_epochs': 3, 'scaling_factor': 1 / 9, 'tta_level': 2,
          'lookahead': True, 'augment': 'none'}
-WARM = {'airbench': [_AB94, {**_AB94, 'epochs': 30.0, 'cutout': 12, 'translate': 4, 'lr': 9.0, 'weight_decay': 0.012,
-                             'warmup_frac': 0.1, 'final_lr_frac': 0.0, 'bn_momentum': 0.1}],
+# airbench96's recipe at the cap's 40 epochs (M2: depth 3 at 64/192/192 the best screen, 95.48 % val; 64/160/224
+# 95.34 %; depth 2 at 64/256/256 94.96 %)
+_R96 = {**_AB94, 'epochs': 40.0, 'cutout': 12, 'translate': 4, 'lr': 9.0, 'weight_decay': 0.012, 'warmup_frac': 0.1,
+        'final_lr_frac': 0.0, 'bn_momentum': 0.1}
+WARM = {'airbench': [{**_R96, 'depth': 3, 'w2': 192, 'w3': 192}, {**_R96, 'depth': 3, 'w2': 160, 'w3': 224}, _R96],
         'resnet9': [{**{k: v for k, v in _AB94.items() if k not in ('depth', 'w1', 'w2', 'w3')}, 'width': 32,
                      'activation': 'gelu', 'epochs': 30.0}],
         'convmixer': [{**{k: v for k, v in _AB94.items() if k not in ('depth', 'w1', 'w2', 'w3')}, 'dim': 256, 'cm_depth': 8,
