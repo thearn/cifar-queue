@@ -516,7 +516,9 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
         return {'val_acc': history[-1]['val_acc'], 'pruned': True, 'progress': round(100 * step / total), **common}
     val, val_share = accuracy(x_val, y_val, h['tta_level'], h['tta_gate'])
     views = {0: 1, 1: 2, 2: 6, 3: 18}[h['tta_level']]
-    out = {'val_acc': round(val, 4), 'val_acc_notta': round(accuracy(x_val, y_val, 0)[0], 4)}
+    out = {'val_acc': round(val, 4), 'val_acc_notta': round(accuracy(x_val, y_val, 0)[0], 4),
+           # (1, 2 and 6 views of the same network: the equivariance-vs-TTA comparisons, PLAN §5.1)
+           'val_acc_by_views': {v: round(accuracy(x_val, y_val, lv)[0], 4) for lv, v in ((0, 1), (1, 2), (2, 6))}}
     if h['test'] == 'sealed':
         # (session 2026-10-30-equivariant-small: the test set is not evaluated during the session; final models only)
         share = val_share
