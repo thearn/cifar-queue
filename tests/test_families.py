@@ -30,3 +30,11 @@ def test_the_space_reaches_both_sides_of_the_cap(family):
 def test_over_the_cap_is_pruned_without_training():
     r = airbench.train(widths=(128, 384, 512), depth=3, param_cap=2_000_000, data='/nonexistent')
     assert r['pruned'] and r['over_cap'] and r['progress'] == 0 and r['params'] > 2_000_000
+
+
+def test_two_seed_trial_averages_and_seals(built):
+    r = families.train_two_seeds(widths=(16, 16, 16), batch_size=64, epochs=1)
+    assert 'test_acc' not in r and len(r['val_acc_seeds']) == 2
+    assert abs(r['val_acc'] - sum(r['val_acc_seeds']) / 2) < 1e-4
+    pruned = families.train_two_seeds(widths=(16, 16, 16), batch_size=64, epochs=2, report=lambda step, value: True)
+    assert pruned.get('pruned') and 'val_acc_seeds' not in pruned

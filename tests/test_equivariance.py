@@ -68,3 +68,28 @@ def test_d4_network_builds_counts_and_trains(built):
     r = airbench.train(widths=(16, 8, 8), depth=3, flip_eq=2, eq_group='d4', blur_pool=True, batch_size=64, epochs=1,
                        test='sealed')
     assert 0 <= r['val_acc'] <= 1 and r['params'] == airbench.param_counts(net)['stored']
+
+
+def test_field_se_keeps_equivariance_and_srf_reduces_stored_weights():
+    torch.manual_seed(0)
+    se = methods.FieldSE(4, k=8, reduction=2)
+    nn_init = torch.nn.init
+    nn_init.normal_(se.fc2.weight)                           # (away from the identity start)
+    f = torch.randn(2, 32, 6, 6)
+    for g in range(8):
+        assert torch.allclose(se(transform_field(f, g)), blocks_after(se(f), g), atol=1e-5)
+    conv = methods.P4MConv(4, 5)
+    methods.use_srf(conv)
+    assert conv.parametrizations.weight.original.shape == (5, 32, 6)
+    x = torch.randn(1, 32, 8, 8)
+    for g in range(8):                                       # (the basis is closed under D4: still equivariant)
+        assert torch.allclose(conv(transform_field(x, g)), blocks_after(conv(x), g), atol=1e-4)
+
+
+def test_se_srf_and_filtering_train(built):
+    base = dict(widths=(16, 16, 16), depth=3, flip_eq=2, batch_size=64, epochs=1, test='sealed')
+    plain = airbench.train(**base)
+    r = airbench.train(**base, se=4, srf=True)
+    assert r['params'] < plain['params'] + 2000 and r['params'] != plain['params']
+    f = airbench.train(**base, filter_keep=0.5, filter_proxy_widths=(8, 8, 8))
+    assert f['epochs_charged'] == 0.5 and f['proxy']['params'] > 0 and 0 <= f['val_acc'] <= 1

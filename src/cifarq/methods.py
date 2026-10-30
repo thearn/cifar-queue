@@ -16,7 +16,7 @@
 (MT2, trunk-and-tails averaging, and MT5, weight-tied depth, live in ``airbench.train`` and ``airbench.model``.)
 
 Session 2026-10-30-equivariant-small adds ``P4MConv`` and ``GroupMaxPool`` (Q1: the flips and quarter turns, D4) and
-``MaxBlurPool`` (Q2: anti-aliased downsampling).
+``MaxBlurPool`` (Q2: anti-aliased downsampling), ``FieldSE`` (O2), and structured receptive fields (``use_srf``, Q4).
 """
 from __future__ import annotations
 
@@ -142,6 +142,66 @@ class MaxBlurPool(nn.Module):
         c = x.shape[1]
         return F.conv2d(F.pad(x, (1, 1, 1, 1), mode='reflect'), self.filt.to(x.dtype).expand(c, 1, 4, 4), stride=2,
                         groups=c)
+
+
+class FieldSE(nn.Module):
+    """Squeeze-and-excitation (Hu et al.) that keeps equivariance: each channel's mean over space and over the ``k``
+    members of its field, a bottleneck MLP (``reduction``), and one sigmoid scale per field channel applied to all its
+    members (``k=1``: the plain block). The session's O2."""
+
+    def __init__(self, c: int, k: int = 1, reduction: int = 8):
+        super().__init__()
+        self.k = k
+        hidden = max(4, c // reduction)
+        self.fc1, self.fc2 = nn.Linear(c, hidden), nn.Linear(hidden, c)
+        nn.init.zeros_(self.fc2.weight); nn.init.constant_(self.fc2.bias, 3.0)    # (starts near the identity)
+
+    def forward(self, x):
+        n, kc = x.shape[:2]
+        z = x.float().mean((2, 3)).view(n, self.k, kc // self.k).mean(1)
+        s = torch.sigmoid(self.fc2(F.gelu(self.fc1(z)))).to(x.dtype)
+        return x * s.repeat(1, self.k).view(n, kc, 1, 1)
+
+
+def gaussian_basis_3x3(sigma: float = 1.0) -> torch.Tensor:
+    """(6, 3, 3): the Gaussian and its derivatives to second order (1, x, y, xx, xy, yy) sampled on the 3x3 grid,
+    orthonormalised (structured receptive fields, Jacobsen et al. 2016). Closed under flips and quarter turns up to
+    sign and mixing, so it composes with the equivariant layers."""
+    r = torch.tensor([-1., 0., 1.])
+    y, x = torch.meshgrid(r, r, indexing='ij')
+    g = torch.exp(-(x ** 2 + y ** 2) / (2 * sigma ** 2))
+    fs = [g, x * g, y * g, (x ** 2 / sigma ** 2 - 1) * g, x * y * g, (y ** 2 / sigma ** 2 - 1) * g]
+    b = torch.stack([f.flatten() for f in fs])
+    q, _ = torch.linalg.qr(b.T)                              # (9, 6): orthonormal columns spanning the basis
+    return q.T.reshape(6, 3, 3)
+
+
+class SRFKernel(nn.Module):
+    """A parametrization: a 3x3 weight (..., 3, 3) as coefficients (..., 6) on ``gaussian_basis_3x3`` (2/3 of the
+    stored weights); ``right_inverse`` projects an initialisation onto the basis. The session's Q4."""
+
+    def __init__(self):
+        super().__init__()
+        self.register_buffer('basis', gaussian_basis_3x3(), persistent=False)
+
+    def forward(self, coeff):
+        return torch.einsum('...b,bij->...ij', coeff, self.basis.to(coeff.dtype))
+
+    def right_inverse(self, w):
+        return torch.einsum('...ij,bij->...b', w, self.basis.to(w.dtype))
+
+
+def use_srf(net) -> int:
+    """Every trainable 3x3 kernel of ``net`` (plain, flip or p4m convolutions; not the frozen whitening layer) stored
+    as structured-receptive-field coefficients. The number of kernels changed."""
+    from torch.nn.utils import parametrize
+    n = 0
+    for m in net.modules():
+        w = getattr(m, 'weight', None)
+        if isinstance(w, nn.Parameter) and w.requires_grad and w.dim() == 4 and tuple(w.shape[-2:]) == (3, 3):
+            parametrize.register_parametrization(m, 'weight', SRFKernel())
+            n += 1
+    return n
 
 
 def _convs_in_order(net):
