@@ -69,10 +69,11 @@ PLAN §9 pivot (2026-10-30): stronger teachers (P1), method screens at matched p
 - **Baseline (airbench top 5, seeds 1-3, done but p2-t30):** best p2-t158 (128/160/192, 1.91 M, kd from one
   airbench96 at w 0.12): 95.40 % val, 95.41 ± 0.11 % test. p1-t157 95.35 / 95.25; p1-t236 95.25 / 95.10; p1-t84 (the
   search's best) 95.17 / 95.06. Winner's curse 0.2-0.5 pp. Under the 95.5 % readout: the pivot stands.
-- **P1 teacher:** the ensemble of the three airbench96 45k models reaches 96.30 % val (singles 95.78-96.08). Screens
-  queued after MT1: ens3 at p2-t158's kd settings and at w 0.5 T 4, seeds 1-3 (`scratchpad/p1.sh`).
-- **P2 MT1** flip-equivariance at p1-t84's recipe and matched parameters (fe1 128/128/144 1.68 M; fe2 128/96/144
-  1.76 M), seeds 1-3, running (`scratchpad/p2.sh`); compared with p1-t84's retrain.
+- **P1 teacher:** the ensemble of the three airbench96 45k models reaches 96.30 % val (singles 95.78-96.08). Screened at
+  p2-t158: Rejected (w 0.12: 95.25 / 95.10; w 0.5 T 4: 95.31 / 95.32; baseline 95.40 / 95.41).
+- **P2 MT1** flip-equivariance at p1-t84's recipe and matched parameters: fe2 (128/96/144, 1.76 M) Promising,
+  95.49 / 95.22 (+0.32 val, +0.16 test, +0.58 no-TTA test vs p1-t84); fe1 no change. Running (`scratchpad/p3.sh`):
+  fe2 at p2-t158's recipe, 128/112/144 (1.94 M), with and without ens3 kd.
 - **M3-pyramidnet** done: Rejected (best = its warm point, 95.28 % val; 23 trials). Session spend 22.06 units (balance 862.40).
 - Watcher over all of them: `watch_session.py cifar` (screens launched without `SOLVEQ_SESSION=fparch` carry the `cifar/` label; set it on later launches).
 
