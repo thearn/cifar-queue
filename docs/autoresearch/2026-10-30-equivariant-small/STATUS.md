@@ -27,8 +27,11 @@ finalist at 95.00 ± 0.08 % (one view) / 95.45 ± 0.17 % (6 views), 1.94 M, 40 e
 
 ## Jobs
 
-None on the G4 (M2 done, 3.9 units; balance 858.46). M1 part 2 committed on `eqsm/M1` (fdc8cdf, 971a96b, ab172e5), not
-yet merged. M3 drafted (`experiments/M3-h1-curves/protocol.md`).
+- **M3-h1-curves** (G4, frozen at cbc3152; 54 trainings via `grid.py`, log `scratchpad/m3.log`; VM up 10:28, balance
+  857.62 before). Provenance note: the working tree was on `eqsm/O4-muon` (6e35fe4) from 10:32:49 to 10:33:35; jobs
+  that started in that window carried that branch's code, which only adds `optimizer='muon'` (unused by M3).
+- `eqsm/O4-muon` (6e35fe4): Muon for the filters, tested, unmerged until its M4 screen.
+- Lesson applied: the queue sends `src/` when a job starts, so code is developed in a worktree while jobs run.
 
 ## M2 readout (val, 2 seeds; finalist D1 D1 1.94 M / plain twin 1.91 M)
 
