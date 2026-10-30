@@ -16,56 +16,60 @@ net = ResNet9.from_pretrained('thearn/cifar10-resnet9')
 probs = net.predict(images)              # uint8 (n, 32, 32, 3) RGB -> (n, 10); net.classes names the columns
 ```
 
-To train one model yourself (a CUDA GPU is needed; this example, the defaults at 16 epochs, trains in under a minute on an L4 and reaches about 88 %, while the published settings take about 3 minutes on an RTX 4060):
+To train one model yourself (the defaults at 16 epochs train in under a minute on an L4 and reach about 88 %, while the published settings take about 6 minutes on an RTX 4060; without a GPU it runs on the CPU, slowly):
 
 ```bash
 pip install -e '.[train]'
-python scripts/prepare_data.py           # download CIFAR-10 from the hub into data/
+python pipeline/10_ingest.py && python pipeline/20_clean.py --targets direct && python pipeline/30_dataset.py
 python -c "from cifarq.train import train; print(train(epochs=16, save='model')['test_acc'])"
 ```
 
-`space/app.py` is a small Gradio demo (upload an image, get the top five classes), run locally with `python space/app.py`.
+`app/app.py` is a small Gradio demo (upload an image, get the top five classes), run locally with `python app/app.py` (`MODEL=path/to/model` for a network of your own).
 
 ## Problem
 
-The data is CIFAR-10 from the Hugging Face hub ([uoft-cs/cifar10](https://huggingface.co/datasets/uoft-cs/cifar10), at a pinned revision), decoded once into a 184 MB `.npz` whose hashes are recorded in `data/MANIFEST.json`. Training uses 45000 images, the search optimises accuracy on a fixed 5000-image validation split, and the 10000 test images are only reported, never tuned on.
+The data is CIFAR-10 from the Hugging Face hub ([uoft-cs/cifar10](https://huggingface.co/datasets/uoft-cs/cifar10), at a pinned revision), decoded once into a 184 MB `.npz` by the data stages, whose hashes are recorded in `data/manifests/`. Training uses 45000 images, the search optimises accuracy on a fixed 5000-image validation split (the same images since the first study: `configs/data.toml`, `[split]`), and the 10000 test images are only reported, never tuned on.
 
-The model is a ResNet-9 in the style of David Page's DAWNBench entry (94 % test in 75 s on a V100, 2018), with a width multiplier covering 0.4-6.6 M parameters. Every training choice in `src/cifarq/train.py` is a hyperparameter with a default (`train.DEFAULTS`), and `src/cifarq/tune.py` defines a conditional search space of 53 parameters: optimiser (SGD or AdamW), schedule, regularisation, GPU-side augmentation, classifier head and logit scaling, epochs 6-30. Optional features are a switch plus a log-scaled strength reaching down to almost no effect, so the search can turn them down gradually instead of only on or off. The sampler is Optuna's multivariate TPE, with a "constant liar" so that trials running in parallel are not proposed twice, and Page's recipe (`tune.PAGE`) is always the first trial.
+The model is a ResNet-9 in the style of David Page's DAWNBench entry (94 % test in 75 s on a V100, 2018), with a width multiplier covering 0.4-6.6 M parameters. Every training choice in `src/cifarq/train.py` (the network in `model.py`) is a hyperparameter with a default (`train.DEFAULTS`), and `src/cifarq/tune.py` defines a conditional search space of 53 parameters: optimiser (SGD or AdamW), schedule, regularisation, GPU-side augmentation, classifier head and logit scaling, epochs 6-30. Optional features are a switch plus a log-scaled strength reaching down to almost no effect, so the search can turn them down gradually instead of only on or off. The sampler is Optuna's multivariate TPE, with a "constant liar" so that trials running in parallel are not proposed twice, and Page's recipe (`tune.PAGE`) is always the first trial.
 
 Note that the logit scaling matters more than it looks. At 4 epochs, scaling the logits by 0.125, using a cosine classifier, or batch-normalising the logits each gave roughly +10 points over a plain linear head (70.1 % to 80-82 %), which is why the space has all three.
 
 ## Running on the queue
 
-The scripts below need solve-queue, so they document how the results were produced rather than something you can run today. A few of its terms are used throughout. A **job** is one Python function call (here `cifarq.train.train` with its hyperparameters) that the queue runs on whichever machine it places it: the local GPU, or a Colab VM it starts and stops as needed (an **executor**; two L4 executors, `cifar-l4a` and `cifar-l4b`, are used here). Each job gets its own directory, and whatever the function writes there comes back when it finishes. The queue copies the submitting Python environment to a VM once and caches it, sends only changed source files with each job, and sends the dataset file once per VM, keyed by its hash.
+The pipeline below needs solve-queue, so it documents how the results were produced rather than something you can run today. A few of its terms are used throughout. A **job** is one Python function call (here `cifarq.train.train` with its hyperparameters) that the queue runs on whichever machine it places it: the local GPU, or a Colab VM it starts and stops as needed (an **executor**; `configs/compute.toml` names them: two L4s, a G4 and an A100). Each job gets its own directory, and whatever the function writes there comes back when it finishes. The queue copies the submitting Python environment to a VM once and caches it, sends only changed source files with each job, and sends the dataset file once per VM, keyed by its hash.
 
-The same search is run in three ways, numbered by script, to test the different paths through the queue:
+The layout is that of [ml-queue-template](../ml-queue-template) (`.copier-answers.yml`): one script per stage in `pipeline/`, where each stage runs set in `configs/compute.toml` (`--targets` overrides it for one run), and every run writes a record to `results/<stage>/<time>.json` with its commit and dataset hash.
 
-- **Mode 1** (`1_single.py`): one training at the defaults, as one job on a Colab L4. This tests the basic round trip.
-- **Mode 2** (`2_optuna_on_vm.py`): the whole Optuna (or Ray Tune) search runs inside a single job on one VM. It uses the card's stored concurrency, or measures how many trainings the GPU can run at once before total throughput stops growing and stores it. Because the trials run beside the study, they can be stopped early (`--pruner rungs`, chosen from this model's curves). The study comes back with the job and is checkpointed while it runs. On a G4 it is the fastest and best way to search here (`docs/PLAN-mode2.md`).
-- **Mode 3** (`3_optuna_distributed.py`): Optuna runs on the local machine, and each trial is a separate job spread over the RTX 4060 and both L4s at once. This is the main use case: one search over a mixed pool.
-
-Two more scripts follow the search: `4_champion.py` retrains mode 3's best trial over several seeds, saving each network, and `publish.py` pushes the code and the chosen network to the hub.
+| Script | Does |
+|---|---|
+| `10_ingest.py`, `20_clean.py`, `30_dataset.py` | the hub's parquet files at a pinned revision, decoded, split; manifests in `data/manifests/` (committed) |
+| `40_train.py` | one training (mode 1: `--targets colab:cifar-l4a --set epochs=16`) |
+| `50_tune.py` | mode 3: Optuna here, each trial a job on the 4060 and the L4s at once |
+| `55_tune_on_vm.py` | mode 2: a whole Optuna (or Ray Tune) search inside one job on one card, its trials as processes there; it uses the card's stored concurrency or measures and stores it, stops trials early through the study (`--pruner rungs`, chosen from this model's curves), and checkpoints the study as it runs. On a G4 the fastest and best way to search here (`docs/PLAN-mode2.md`) |
+| `60_champion.py` | the best trial trained again over seeds, the median seed by validation kept |
+| `70_publish.py` | the code at HEAD, the champion's network and the model card (`pipeline/card.md`) to the hub; `--dry-run` first |
+| `tools/` | `watch.py` (follow a search), `rung_check.py` (choose early stopping), `conformal_check.py`, `pbt_g4.py` |
 
 ```bash
-uv venv ~/.venvs/cifarq --python 3.12
-uv pip install --python ~/.venvs/cifarq/bin/python -e '.[train]' -e ../solve-queue[gcs]
-~/.venvs/cifarq/bin/python scripts/prepare_data.py
-~/.venvs/cifarq/bin/python scripts/1_single.py                          # mode 1: one training on a Colab L4
-~/.venvs/cifarq/bin/python scripts/2_optuna_on_vm.py --trials 600 --minutes 45 --pruner rungs --executor cifar-g4 --gpu G4
-                                                                        # mode 2: a whole search in one G4 job, early stopping
-                                                                        # (--driver ray, --cold --seed N for comparisons)
-~/.venvs/cifarq/bin/python scripts/rung_check.py                        # where early stopping is safe, from complete curves
-~/.venvs/cifarq/bin/python scripts/5_pbt_g4.py                          # probe (seeds, batches, concurrency) and PBT on a G4
-~/.venvs/cifarq/bin/python scripts/3_optuna_distributed.py --trials 80   # mode 3: trials over the 4060 and two L4s
-~/.venvs/cifarq/bin/python scripts/4_champion.py --seeds 5              # mode 3's best retrained, networks saved
-~/.venvs/cifarq/bin/python scripts/publish.py --no-space                # code and network to the hub
+uv venv ~/.venvs/cifarq --python 3.12      # a uv or conda Python: a VM cannot rebuild the system one
+uv pip install --python ~/.venvs/cifarq/bin/python -e '.[train,sf,test]' -e ../solve-queue[gcs]
+~/.venvs/cifarq/bin/python pipeline/10_ingest.py && ~/.venvs/cifarq/bin/python pipeline/20_clean.py && ~/.venvs/cifarq/bin/python pipeline/30_dataset.py
+~/.venvs/cifarq/bin/python pipeline/40_train.py --targets colab:cifar-l4a --set epochs=16          # mode 1
+~/.venvs/cifarq/bin/python pipeline/55_tune_on_vm.py --target colab:cifar-g4 --trials 600 --minutes 45 --pruner rungs
+                                           # mode 2: a whole search in one G4 job (--driver ray, --cold --seed N for comparisons)
+~/.venvs/cifarq/bin/python pipeline/tools/rung_check.py         # where early stopping is safe, from complete curves
+~/.venvs/cifarq/bin/python pipeline/tools/pbt_g4.py             # probe (seeds, batches, concurrency) and PBT on a G4
+~/.venvs/cifarq/bin/python pipeline/50_tune.py --trials 80 --targets local colab:cifar-l4a colab:cifar-l4b # mode 3
+~/.venvs/cifarq/bin/python pipeline/60_champion.py --seeds 5
+~/.venvs/cifarq/bin/python pipeline/70_publish.py --dry-run && ~/.venvs/cifarq/bin/python pipeline/70_publish.py --no-space
+~/.venvs/cifarq/bin/python -m pytest       # CPU tests on a tiny synthetic CIFAR; RUN_QUEUE_TESTS=1 adds one job through the daemon
 ```
 
-Use a uv or conda Python, since a VM cannot rebuild the system one. One training at a time was best on the L4, the A100 and the G4 (two at once gave 6 % less on the G4); mode 2 runs two processes taking turns at the card instead, so one trial's set-up overlaps the other's training. To follow a run, `solveq wait ID --grep trial` prints each trial as it ends (the solve-queue skill). Colab allows two GPU VMs per account, so run mode 3 after mode 2 has released its VM; `4_champion.py --targets local` uses the local GPU only, for when the VMs are busy with other work.
+One training at a time was best on the L4, the 4060, the A100 and the G4 (two at once gave 6 % less on the G4); mode 2 runs two processes taking turns at the card instead, so one trial's set-up overlaps the other's training. To follow a run, `solveq wait ID --grep trial` prints each trial as it ends (the solve-queue skill). Colab allows two GPU VMs per account, so run mode 3 after mode 2 has released its VM. Trials return only their numbers, so no weights are kept from the search; `60_champion.py` trains the best parameters again with `train(save='model')`. `70_publish.py` refuses uncommitted changes and a champion trained on another dataset than the manifest names, and its hub commit names the local commit. The Gradio app in `app/` is not hosted, since a Gradio Space now needs a paid Hugging Face plan or ZeroGPU.
 
-Trials return only their numbers, so no weights are kept from the search (80 networks at 26 MB would mostly be thrown away). Instead `4_champion.py` trains the best parameters again with `train(save='model')`, which writes the network into the job's directory, and publishes the seed with the median validation accuracy. `publish.py` refuses to run with uncommitted changes, and its hub commit names the local commit. The Gradio app in `space/` is not hosted, since a Gradio Space now needs a paid Hugging Face plan or ZeroGPU.
+To follow a search, `pipeline/tools/watch.py` (mode 3's study) or `--mode2` (the running mode 2 job's study, copied back every two minutes), or `uvx optuna-dashboard sqlite:///results/tune-study.db`. To resume a dead search, pass `--resume`: mode 3 reattaches the trials left in flight to their jobs, and mode 2 sends the last copied study to a new job. Completed trials are never re-run. All output goes to `results/` (not committed).
 
-## Results (2026-10-27/28)
+## Results (2026-10-27/28; the full log: `docs/RESULTS.md`)
 
 | Run | Hardware | Trials | Time | Best val | Test |
 |---|---|---|---|---|---|
@@ -94,20 +98,6 @@ stopping needed care: Optuna's and Ray's ASHA at their usual settings cut the be
 gain most of their accuracy late; rungs chosen by replaying 161 complete curves kept them and found more good
 configurations than no pruning in the same time. Population-based training on the best configuration gave nothing
 more for runs this short.
-
-## Watching and resuming
-
-```bash
-~/.venvs/cifarq/bin/python scripts/watch.py            # mode 3, refreshes every 30 s
-~/.venvs/cifarq/bin/python scripts/watch.py --mode2    # mode 2's study, as last copied back
-uvx optuna-dashboard sqlite:///results/distributed-study.db
-```
-
-`watch.py` reads a backup copy of the SQLite study, so it never holds a lock the search needs. Run `optuna-dashboard` through `uvx` rather than installing it in the venv, since a change to the venv makes every VM reinstall it. In mode 2 the study lives on the VM, and solve-queue copies `progress.json` and `study.db` back every two minutes.
-
-To resume a dead search, pass `--resume` (optionally with a study name) to the mode 2 or mode 3 script. In mode 3, trials left in flight are reattached to their queue jobs: finished jobs report their result, running ones are followed, and lost ones are re-queued with the same parameters. In mode 2 the last copied study is sent to a new job, and only the trials that were running on the dead VM are repeated. Completed trials are never re-run, and since TPE refits on the full history the resumed search samples as the uninterrupted one would have.
-
-All output goes to `results/` (not committed).
 
 ## References
 

@@ -15,7 +15,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from .train import DEFAULTS, MEAN, STD, VALIDATION, augment, model, whitening_filters
+from .train import DEFAULTS, MEAN, STD, augment, model, whitening_filters
 
 # what PBT may change during a run, and the ranges it resamples from
 MUTABLE = {'lr': (1e-4, 3e-2), 'weight_decay': (1e-3, 0.5), 'label_smoothing': (0.0, 0.2),
@@ -31,7 +31,7 @@ class Trainer:
         import numpy as np
         import torch
         import schedulefree
-        from . import data as D
+        from .data import dataset
         h = {**DEFAULTS, **hyperparameters}
         for k in ('width', 'batch_size', 'epochs', 'seed'):
             h[k] = int(h[k])
@@ -41,14 +41,11 @@ class Trainer:
         torch.manual_seed(h['seed']); np.random.seed(h['seed'])
         dev = self.dev = torch.device('cuda')
         torch.backends.cudnn.benchmark = True
-        arrays = D.load(data)
-        order = np.random.default_rng(1234).permutation(len(arrays['y_train']))
-        val_idx, tr_idx = order[:VALIDATION], order[VALIDATION:]
+        arrays = dataset.load(data)
         gpu = lambda a: torch.from_numpy(a).to(dev)
-        self.x_train, self.y_train = gpu(arrays['x_train'][tr_idx]).permute(0, 3, 1, 2).contiguous(), gpu(arrays['y_train'][tr_idx]).long()
-        self.x = {'val': gpu(arrays['x_train'][val_idx]).permute(0, 3, 1, 2).contiguous(),
-                  'test': gpu(arrays['x_test']).permute(0, 3, 1, 2).contiguous()}
-        self.y = {'val': gpu(arrays['y_train'][val_idx]).long(), 'test': gpu(arrays['y_test']).long()}
+        self.x_train, self.y_train = gpu(arrays['x_train']).permute(0, 3, 1, 2).contiguous(), gpu(arrays['y_train']).long()
+        self.x = {s: gpu(arrays[f'x_{s}']).permute(0, 3, 1, 2).contiguous() for s in ('val', 'test')}
+        self.y = {s: gpu(arrays[f'y_{s}']).long() for s in ('val', 'test')}
         mean, std = torch.tensor(MEAN, device=dev).view(1, 3, 1, 1), torch.tensor(STD, device=dev).view(1, 3, 1, 1)
         self.norm = lambda x: ((x - mean) / std).contiguous(memory_format=torch.channels_last)
         whitening = whitening_filters(self.norm(self.x_train[:5000].float() / 255), h['whiten_eps']) if h['whiten'] else None

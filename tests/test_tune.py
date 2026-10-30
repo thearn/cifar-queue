@@ -1,13 +1,9 @@
 """The search space against the training function (no GPU): every sampled point is a valid set of hyperparameters,
-every optional feature can be sampled off, and the queue options grow with the trial's size."""
-import sys
-from pathlib import Path
+every optional feature can be sampled off, the queue options grow with the trial's size, a trial of a study made before
+schedule-free training still maps to train's arguments, and a short search runs end to end in this process."""
+import optuna
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-
-import optuna  # noqa: E402
-
-from cifarq import train, tune  # noqa: E402
+from cifarq import train, tune
 
 
 def test_the_space_samples_valid_hyperparameters_with_every_feature_off_somewhere():
@@ -37,3 +33,17 @@ def test_pages_recipe_is_a_point_of_the_space():
     p = tune.space(study.ask())
     assert p['epochs'] == 24 and p['width'] == 64 and p['lr'] == 0.4 and p['logit_scale'] == 0.125
     assert p['cutout_size'] == 8 and p['decay'] == 'linear' and not set(p) - set(train.DEFAULTS)
+
+
+def test_a_trial_from_before_schedule_free_maps_to_train_arguments():
+    old = {k: v for k, v in tune.PAGE.items() if k != 'schedule_free'}
+    assert tune.train_params(old) == tune.train_params(tune.PAGE)
+
+
+def test_short_search(built):
+    from conftest import SMALL
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    study = optuna.create_study(direction=tune.DIRECTION, sampler=tune.sampler(startup=2))
+    study.enqueue_trial(tune.REFERENCE)
+    study.optimize(lambda t: train.train(**{**tune.space(t), 'epochs': 1, **SMALL})[tune.OBJECTIVE], n_trials=3)
+    assert len(study.trials) == 3 and study.best_value > 0.1

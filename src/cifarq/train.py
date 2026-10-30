@@ -6,8 +6,8 @@
   scale on the logits,
   and optionally a fixed input whitening layer (27 filters from the eigenvectors of the training images' 3x3 patch
   covariance, as in Page's later DAWNBench versions);
-- data: 45000 training images, 5000 held out (a fixed split) as the validation set the tuning optimises; the test set
-  (10000) is reported, never tuned on;
+- data: the dataset's 45000 training images and 5000 validation images (``data.dataset``: a fixed split), the
+  validation set the one the tuning optimises; the test set (10000) is reported, never tuned on;
 - augmentation, random per image and done on the GPU: an affine transform (translation in pixels, rotation in degrees,
   scale), a horizontal flip with a probability, colour jitter (brightness, contrast, saturation), cutout (a square of a
   size, with a probability), and mixup or cutmix (Beta(alpha) mixing, with a probability per batch);
@@ -17,13 +17,18 @@
   linear, exponential, or none) to a final fraction of the peak;
 - evaluation: optionally test-time flip averaging (each image's logits averaged with its mirror's).
 
-The images live on the GPU as uint8; the arithmetic is bf16 under autocast. ``train(**hyperparameters)`` is what a
+The model is in ``model``, the accuracy in ``evaluate``. The images live on the GPU as uint8; the arithmetic is bf16
+under autocast. ``device='cpu'`` (or ``auto`` without a GPU) runs the same code on the CPU, for the tests. ``train(**hyperparameters)`` is what a
 queue job calls (``solve_queue.function_job``); its return value, a dict of plain numbers, is the job's result.
 """
 from __future__ import annotations
 
+import contextlib
 import math
 import time
+
+from . import evaluate
+from .model import MEAN, STD, model, whitening_filters  # noqa: F401  (train.model etc.: the names before the split)
 
 DEFAULTS = dict(
     # model
@@ -40,76 +45,6 @@ DEFAULTS = dict(
     # evaluation
     tta_flip=False,
     seed=0)
-MEAN, STD = (0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)
-VALIDATION = 5000
-
-
-def model(width: int = 32, dropout: float = 0.0, activation: str = 'relu', classes: int = 10, celu_alpha: float = 0.075,
-          head: str = 'linear', logit_scale: float = 1.0, whitening=None):
-    """The network. ``head``: the classifier and how its output is normalised: ``linear`` (a linear layer, its logits
-    times ``logit_scale``: Page's network is 0.125), ``cosine`` (the cosine of features and class weights, both L2
-    normalised, times ``logit_scale``: NormFace, cosine classifiers) or ``bn`` (a linear layer, then batch norm on the
-    logits without an affine part, times ``logit_scale``). ``whitening``: a fixed (27, 3, 3, 3) filter bank
-    (``whitening_filters``) put first, the prep convolution then taking its 27 channels."""
-    import torch
-    import torch.nn as nn
-    import torch.nn.functional as F
-    act = {'relu': lambda: nn.ReLU(inplace=True), 'gelu': nn.GELU, 'silu': lambda: nn.SiLU(inplace=True),
-           'celu': lambda: nn.CELU(alpha=celu_alpha)}[activation]
-
-    def conv(cin, cout, pool=False):
-        layers = [nn.Conv2d(cin, cout, 3, padding=1, bias=False), nn.BatchNorm2d(cout), act()]
-        return nn.Sequential(*layers, *([nn.MaxPool2d(2)] if pool else []))
-
-    class Residual(nn.Module):
-        def __init__(self, c):
-            super().__init__()
-            self.f = nn.Sequential(conv(c, c), conv(c, c))
-
-        def forward(self, x):
-            return x + self.f(x)
-
-    class Scale(nn.Module):
-        def __init__(self, s):
-            super().__init__()
-            self.s = s
-
-        def forward(self, x):
-            return x * self.s
-
-    class Cosine(nn.Module):
-        def __init__(self, cin, cout):
-            super().__init__()
-            self.weight = nn.Parameter(torch.randn(cout, cin) / cin ** 0.5)
-
-        def forward(self, x):
-            return F.normalize(x, dim=1) @ F.normalize(self.weight, dim=1).T
-
-    w = width
-    first = []
-    if whitening is not None:
-        white = nn.Conv2d(3, whitening.shape[0], 3, padding=1, bias=False)
-        white.weight.data.copy_(whitening)
-        white.weight.requires_grad_(False)
-        first = [white]
-    cin = whitening.shape[0] if whitening is not None else 3
-    classifier = {'linear': lambda: [nn.Linear(8 * w, classes)], 'cosine': lambda: [Cosine(8 * w, classes)],
-                  'bn': lambda: [nn.Linear(8 * w, classes, bias=False), nn.BatchNorm1d(classes, affine=False)]}[head]()
-    return nn.Sequential(*first, conv(cin, w), conv(w, 2 * w, pool=True), Residual(2 * w), conv(2 * w, 4 * w, pool=True),
-                         conv(4 * w, 8 * w, pool=True), Residual(8 * w), nn.AdaptiveMaxPool2d(1), nn.Flatten(),
-                         nn.Dropout(dropout), *classifier, *([Scale(logit_scale)] if logit_scale != 1.0 else []))
-
-
-def whitening_filters(x, eps: float):
-    """The whitening filter bank of normalised images ``x`` (N, 3, 32, 32): the eigenvectors of their 3x3 patches'
-    covariance, each divided by the square root of its eigenvalue (plus ``eps``), as (27, 3, 3, 3) filters."""
-    import torch
-    import torch.nn.functional as F
-    patches = F.unfold(x.float(), 3).transpose(1, 2).reshape(-1, 27)          # every 3x3x3 patch, unpadded
-    patches = patches - patches.mean(0)
-    cov = patches.T @ patches / len(patches)
-    vals, vecs = torch.linalg.eigh(cov.double())
-    return (vecs.T / torch.sqrt(vals + eps).unsqueeze(1)).float().reshape(27, 3, 3, 3)
 
 
 def lr_factor(step: int, total: int, h: dict) -> float:
@@ -182,17 +117,18 @@ class EMA:
                     v.copy_(theirs[k])
 
 
-def train(data: str | None = None, save: str | None = None, report=None, **hyperparameters) -> dict:
+def train(data: str | None = None, save: str | None = None, report=None, device: str = 'auto', **hyperparameters) -> dict:
     """Train one model with ``DEFAULTS`` updated by ``hyperparameters`` (an unknown name is an error); its validation
     and test accuracy, time and throughput, and the per-epoch history. ``save``: a directory (relative: in the job's
     directory, which comes back with the job) to write the trained network to as a ``hub.ResNet9`` (the EMA's weights
     when there is one). ``report``: early stopping (``solve_queue.hpo.reporter``: a study's spec, or a callable
     ``(step, value) -> stop``): after each epoch the validation accuracy is reported at the percent of training done,
-    and a trial told to stop returns at once with ``pruned: True`` (no test evaluation)."""
+    and a trial told to stop returns at once with ``pruned: True`` (no test evaluation). ``device``: ``cuda``, ``cpu``
+    or ``auto`` (the GPU when there is one); not a hyperparameter, so not in the result's ``hyperparameters``."""
     import numpy as np
     import torch
     import torch.nn.functional as F
-    from . import data as D
+    from .data import dataset
     unknown = set(hyperparameters) - set(DEFAULTS)
     if unknown:
         raise TypeError(f'unknown hyperparameters: {sorted(unknown)}')
@@ -202,14 +138,12 @@ def train(data: str | None = None, save: str | None = None, report=None, **hyper
     h['whiten'], h['tta_flip'] = bool(h['whiten']), bool(h['tta_flip'])
 
     torch.manual_seed(h['seed']); np.random.seed(h['seed'])
-    dev = torch.device('cuda')
+    dev = torch.device(('cuda' if torch.cuda.is_available() else 'cpu') if device == 'auto' else device)
     torch.backends.cudnn.benchmark = True
-    arrays = D.load(data)
-    order = np.random.default_rng(1234).permutation(len(arrays['y_train']))   # the same split for every trial
-    val_idx, tr_idx = order[:VALIDATION], order[VALIDATION:]
+    arrays = dataset.load(data)                              # (the split is the dataset's: the same for every trial)
     gpu = lambda a: torch.from_numpy(a).to(dev)
-    x_train, y_train = gpu(arrays['x_train'][tr_idx]).permute(0, 3, 1, 2).contiguous(), gpu(arrays['y_train'][tr_idx]).long()
-    x_val, y_val = gpu(arrays['x_train'][val_idx]).permute(0, 3, 1, 2).contiguous(), gpu(arrays['y_train'][val_idx]).long()
+    x_train, y_train = gpu(arrays['x_train']).permute(0, 3, 1, 2).contiguous(), gpu(arrays['y_train']).long()
+    x_val, y_val = gpu(arrays['x_val']).permute(0, 3, 1, 2).contiguous(), gpu(arrays['y_val']).long()
     x_test, y_test = gpu(arrays['x_test']).permute(0, 3, 1, 2).contiguous(), gpu(arrays['y_test']).long()
     mean, std = torch.tensor(MEAN, device=dev).view(1, 3, 1, 1), torch.tensor(STD, device=dev).view(1, 3, 1, 1)
     norm = lambda x: ((x - mean) / std).contiguous(memory_format=torch.channels_last)
@@ -250,35 +184,25 @@ def train(data: str | None = None, save: str | None = None, report=None, **hyper
             return
         opt.eval()
         net.train()
-        with torch.no_grad(), torch.autocast('cuda', dtype=torch.bfloat16):
+        with torch.no_grad(), torch.autocast(dev.type, dtype=torch.bfloat16):
             for i in range(0, min(len(y_train), 25 * h['batch_size']), h['batch_size']):
                 net(norm(x_train[i:i + h['batch_size']].float() / 255))
 
     def accuracy(x, y):
-        m = ema.module if ema is not None else net
-        m.eval()
-        correct = 0
-        with torch.no_grad(), torch.autocast('cuda', dtype=torch.bfloat16):
-            for i in range(0, len(y), 1000):
-                xb = norm(x[i:i + 1000].float() / 255)
-                logits = m(xb)
-                if h['tta_flip']:                            # the mirror's logits too
-                    logits = logits + m(xb.flip(3))
-                correct += (logits.argmax(1) == y[i:i + 1000]).sum().item()
-        m.train()
-        return correct / len(y)
+        return evaluate.accuracy(ema.module if ema is not None else net, x, y, norm, h['tta_flip'])
 
     try:                                                     # (taking turns at the card with other trials: opt-in)
         from solve_queue.gpu import device_turn
     except ImportError:
-        import contextlib
         device_turn = contextlib.nullcontext
     turn = device_turn(); turn.__enter__()
-    if report is not None:
-        from solve_queue.hpo import reporter
-        stop_here = reporter(report)
-    else:
+    if report is None:
         stop_here = lambda step, value: False
+    elif callable(report):
+        stop_here = report
+    else:
+        from solve_queue.hpo import reporter                 # a study's spec: only inside the queue's trials
+        stop_here = reporter(report)
     pruned = False
     history, t0 = [], time.time()
     for epoch in range(h['epochs']):
@@ -300,7 +224,7 @@ def train(data: str | None = None, save: str | None = None, report=None, **hyper
                     y0, x0 = np.random.randint(0, 33 - side, 2) if side else (0, 0)
                     xb = xb.clone(); xb[:, :, y0:y0 + side, x0:x0 + side] = xb[other, :, y0:y0 + side, x0:x0 + side]
                     lam = 1 - side * side / 1024
-            with torch.autocast('cuda', dtype=torch.bfloat16):
+            with torch.autocast(dev.type, dtype=torch.bfloat16):
                 out = net(norm(xb))
                 loss = F.cross_entropy(out, yb, label_smoothing=h['label_smoothing'])
                 if mixed:
@@ -325,18 +249,20 @@ def train(data: str | None = None, save: str | None = None, report=None, **hyper
         if epoch + 1 < h['epochs'] and stop_here(round(100 * (epoch + 1) / h['epochs']), history[-1]['val_acc']):
             pruned = True                                         # the study's pruner: worse than its rung's best
             break
-    torch.cuda.synchronize()
+    if dev.type == 'cuda':
+        torch.cuda.synchronize()
     seconds = time.time() - t0
     test_acc = None if pruned else round(accuracy(x_test, y_test), 4)
     turn.__exit__(None, None, None)
+    name = torch.cuda.get_device_name(dev) if dev.type == 'cuda' else 'cpu'
     if pruned:
         return {'val_acc': history[-1]['val_acc'], 'pruned': True, 'progress': round(100 * len(history) / h['epochs']),
                 'epochs_run': len(history), 'train_seconds': round(seconds, 1),
                 'images_per_s': round(len(history) * steps_per_epoch * h['batch_size'] / seconds),
-                'device': torch.cuda.get_device_name(0), 'history': history, 'hyperparameters': h}
+                'device': name, 'history': history, 'hyperparameters': h}
     out = {'val_acc': history[-1]['val_acc'], 'test_acc': test_acc, 'train_seconds': round(seconds, 1),
            'images_per_s': round(len(history) * steps_per_epoch * h['batch_size'] / seconds),
-           'params': sum(p.numel() for p in net.parameters()), 'device': torch.cuda.get_device_name(0),
+           'params': sum(p.numel() for p in net.parameters()), 'device': name,
            'history': history, 'hyperparameters': h}
     if save:
         from .hub import save as save_model

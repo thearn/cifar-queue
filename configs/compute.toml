@@ -1,0 +1,49 @@
+# Where each pipeline stage runs. A stage's targets are {target = slots}: "direct" (in this process, no queue: CI),
+# "local" (the RTX 4060, through the queue), "colab:NAME" (an executor below); slots are how many of the stage's jobs
+# run at once on that target. Resource hints are the job's peak needs, for the queue's admission. Command-line
+# --targets on a stage overrides its line here. One training at a time was best on every card measured (README).
+
+session = "cifar"                         # SOLVEQ_SESSION: labels, solveq news/brief/wait follow it
+
+[executors]                               # registered when a stage names them (no VM until a job needs one)
+cifar-l4a = { gpu = "L4", idle_minutes = 5 }
+cifar-l4b = { gpu = "L4", idle_minutes = 5 }
+cifar-g4 = { gpu = "G4", idle_minutes = 1 }
+cifar-a100 = { gpu = "A100", idle_minutes = 1 }
+
+[stages.clean]                            # decoding the two parquet files: here
+targets = { direct = 1 }
+gpu_mb = 0
+host_mb = 4000
+minutes = 5
+
+[stages.train]                            # one training (16 epochs at the defaults: 37 s on an L4)
+targets = { local = 1 }
+gpu_mb = 3000
+host_mb = 6000
+minutes = 5
+
+[stages.tune]                             # trials as jobs (tune.job_options sizes each one); mode 3 was the 4060 and both L4s:
+targets = { local = 1 }
+# targets = { local = 1, "colab:cifar-l4a" = 1, "colab:cifar-l4b" = 1 }
+gpu_mb = 3000
+host_mb = 6000
+minutes = 5
+
+[stages.tune_on_vm]                       # mode 2: a whole search inside one job (pipeline/55_tune_on_vm.py)
+targets = { "colab:cifar-l4a" = 1 }
+gpu_mb = 22000
+host_mb = 6000
+
+[stages.champion]                         # the best parameters over several seeds
+targets = { local = 1 }
+# targets = { local = 1, "colab:cifar-l4a" = 1, "colab:cifar-l4b" = 1 }
+gpu_mb = 3000
+host_mb = 6000
+minutes = 10
+
+[stages.pbt]                              # pipeline/tools/pbt_g4.py
+targets = { "colab:cifar-g4" = 1 }
+gpu_mb = 20000
+host_mb = 16000
+minutes = 30

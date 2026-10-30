@@ -1,0 +1,35 @@
+{
+ "stage": "clean",
+ "inputs": "0799d007a9d2567d",
+ "settings": {
+  "classes": [
+   "airplane",
+   "automobile",
+   "bird",
+   "cat",
+   "deer",
+   "dog",
+   "frog",
+   "horse",
+   "ship",
+   "truck"
+  ],
+  "size": 32
+ },
+ "rows": {
+  "test": 10000,
+  "train": 50000
+ },
+ "kept": {
+  "test": 10000,
+  "train": 50000
+ },
+ "dropped": {
+  "wrong_size": 0,
+  "unknown_label": 0
+ },
+ "files": {
+  "test.npz": "fd20b3c2cae10de47a650bfd9bf0a660a2a461d692a5f88c4c211a5820a906f0",
+  "train.npz": "5d0c3f114fb1345a0d2882232c389a6ba6687a977d447735696fa03388e65154"
+ }
+}

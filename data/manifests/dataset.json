@@ -1,0 +1,30 @@
+{
+ "stage": "dataset",
+ "inputs": "3df55954f7ab32d2",
+ "file": "dataset-6e01ae0c4036.npz",
+ "sha256": "6e01ae0c4036ee316bbb313d356cd5baf53af5489dc7b67e318a2e050665218d",
+ "settings": {
+  "validation": 5000,
+  "seed": 1234
+ },
+ "rows": {
+  "train": 45000,
+  "val": 5000,
+  "test": 10000
+ },
+ "classes": [
+  "airplane",
+  "automobile",
+  "bird",
+  "cat",
+  "deer",
+  "dog",
+  "frog",
+  "horse",
+  "ship",
+  "truck"
+ ],
+ "files": {
+  "dataset-6e01ae0c4036.npz": "6e01ae0c4036ee316bbb313d356cd5baf53af5489dc7b67e318a2e050665218d"
+ }
+}

@@ -26,7 +26,10 @@ import json
 import time
 from pathlib import Path
 
+from . import evaluate
+
 TRAIN = 'cifarq.train:train'
+OBJECTIVE, DIRECTION = evaluate.KEY, evaluate.DIRECTION
 
 
 # David Page's baseline DAWNBench recipe (ResNet-9, 24 epochs) as a point of this space, enqueued as each search's
@@ -40,6 +43,7 @@ PAGE = {'schedule_free': False, 'epochs': 24, 'width': 64, 'activation': 'relu',
         'final_lr_frac': 0.001, 'use_translate': True, 'aug_translate': 4.0, 'use_rotate': False, 'use_scale': False,
         'aug_flip': 0.5, 'use_brightness': False, 'use_contrast': False, 'use_saturation': False, 'use_cutout': True,
         'cutout_size': 8, 'cutout_prob': 1.0, 'mix': 'none'}
+REFERENCE = PAGE                                          # (the template's name: every new search's first trial)
 
 
 def sampler(seed: int = 0, startup: int = 16):
@@ -110,14 +114,15 @@ def space(trial, schedule_free: bool = True) -> dict:
 
 
 def train_params(params: dict) -> dict:
-    """A point of the space as the search records it (a trial's ``params``, or ``PAGE``) as ``train``'s arguments."""
+    """A point of the space as the search records it (a trial's ``params``, or ``PAGE``) as ``train``'s arguments. A
+    trial of a study made before schedule-free training was in the space has no ``schedule_free``: the space without it."""
     import optuna
-    return space(optuna.trial.FixedTrial(params))
+    return space(optuna.trial.FixedTrial(params), schedule_free='schedule_free' in params)
 
 
 # on a VM a trial runs as a fork of solve-queue's persistent worker, which imported torch and the training code and
 # loaded the arrays once (the local GPU's jobs run as their own processes either way)
-WORKER = {'preload': ['torch', 'torch.nn.functional', 'cifarq.train', 'cifarq.data:warm']}
+WORKER = {'preload': ['torch', 'torch.nn.functional', 'cifarq.train', 'cifarq.data.dataset:warm']}
 
 
 def job_options(params: dict) -> dict:
@@ -129,7 +134,7 @@ def job_options(params: dict) -> dict:
             'vm_env': {'SOLVEQ_DEVICE_TURNS': '1'}}
 
 
-# early stopping chosen from this model's own curves (scripts/rung_check.py on 161 complete trials, 2026-10-29):
+# early stopping chosen from this model's own curves (pipeline/tools/rung_check.py on 161 complete trials, 2026-10-29):
 # Page-style schedules gain most of their accuracy as the rate decays, so accuracy at 30 % of training ranks the final
 # best poorly (rho 0.65; keeping the top third there cut 11 of the 17 trials that finished in the top 10 %). Rungs at
 # 10/30/60 % keeping the best two thirds, on the best value so far, used 51 % of the compute and kept 15 of 17.
@@ -177,7 +182,8 @@ def _best_by_time(study) -> list:
 def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2, 3, 4, 6), seed: int = 0,
           data: str | None = None, resume_from: str | None = None, pruner: str = 'none', concurrent: int | None = None,
           minutes: float | None = None, turns: bool = True, pruner_settings: dict | None = None,
-          schedule_free: bool = True, warm: bool = True, startup: int = 16) -> dict:
+          schedule_free: bool = True, warm: bool = True, startup: int = 16, family: str = 'b0', cap: int = 2_000_000,
+          max_epochs: float = 40, kd: str = '') -> dict:
     """Mode 2, run as one queue job on a VM: how many trainings the GPU runs at once with gain (``calibrate``, on
     2-epoch width-32 runs), then Optuna over the whole ``space`` with that many trials in flight as processes on the GPU, the study in
     ``study.db`` in the job's directory (brought back with the job). ``resume_from``: a study database of a run that
@@ -189,17 +195,27 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
     ``concurrent``: trainings at once, given (a stored calibration) rather than measured. ``minutes``: stop
     asking for trials after this long (a fixed budget; those in flight finish). ``turns``: when one training at a time is
     best, two processes take turns at the card (``solve_queue.gpu.device_turn``), so the next trial's set-up overlaps this
-    one's training. The best trial, the calibration and the timing."""
+    one's training. ``family``: ``b0`` (this space, ``train.train``, Page's recipe first) or a family of
+    ``cifarq.families`` (``airbench.train``, its space under ``cap`` parameters and ``max_epochs``, its warm points;
+    ``kd`` a teacher directory for distillation). The best trial, the calibration and the timing."""
+    import functools
     import optuna
     import shutil
     from solve_queue.hpo import optuna_optimize, recover_running
     from solve_queue.parallel import GPUProcessExecutor, calibrate
     from solve_queue.hpo import make_pruner
     t0 = time.time()
+    if family == 'b0':
+        fn, space_fn, warm_points = TRAIN, functools.partial(space, schedule_free=schedule_free), [PAGE]
+        cal = {'epochs': 2, 'width': 32}
+    else:
+        from . import families
+        fn, warm_points, cal = families.TRAIN, families.WARM[family], families.CALIBRATE[family]
+        space_fn = functools.partial(families.SPACES[family], cap=cap, max_epochs=max_epochs, kd=kd)
     if concurrent:
         k, table = concurrent, [{'concurrent': concurrent, 'given': True}]
     else:
-        k, table = calibrate(TRAIN, {'epochs': 2, 'width': 32, 'data': data}, candidates=candidates)
+        k, table = calibrate(fn, {**cal, 'data': data}, candidates=candidates)
     t_cal = time.time() - t0
     storage = f'sqlite:///{Path.cwd() / "study.db"}'
     ckpt = Path.cwd() / 'study-ckpt.db'
@@ -218,7 +234,8 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
     if not study.trials and warm:
         # Page's recipe first: the search starts from the reference (a production search); cold (``warm=False``) for
         # comparing methods and cards, whose differences a known optimum found in the first minutes would hide
-        study.enqueue_trial(PAGE)
+        for point in warm_points:
+            study.enqueue_trial(point)
     def progress(line: str):
         """Each trial told: its line in the log, and progress.json (replaced whole) for whoever watches the job."""
         print(line, flush=True)
@@ -239,20 +256,20 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
         os.environ['SOLVEQ_DEVICE_TURNS'] = '1'             # (inherited by the pool's processes)
         pool = 2
     with GPUProcessExecutor(pool) as ex:
-        import functools
-        optuna_optimize(study, TRAIN, functools.partial(space, schedule_free=schedule_free), n_trials=n_trials, executor=ex,
+        optuna_optimize(study, fn, space_fn, n_trials=n_trials, executor=ex,
                         concurrency=pool, fixed={'data': data},
                         report_to=storage if pruner != 'none' else None, minutes=minutes, smooth=pruner != 'none',
                         log=progress)
     best = study.best_trial
     states = [t.state.name for t in study.trials]
-    others = [t.value for t in study.trials if t.state.name == 'COMPLETE' and (t.number != 0 or not warm)]
+    others = [t.value for t in study.trials if t.state.name == 'COMPLETE' and (t.number >= len(warm_points) or not warm)]
     out = {'best_value': best.value, 'best_params': best.params, 'best_test_acc': best.user_attrs.get('test_acc'),
            'best_train_seconds': best.user_attrs.get('train_seconds'), 'pruner': pruner, 'start': 'Page' if warm else 'cold',
            'startup': startup,
            # minutes from the search's start to its first trial at 92 % and at 93 % (a cold start's measure: less luck
            # than the best value alone)
-           'minutes_to': _minutes_to(study, (0.92, 0.93)),
+           'minutes_to': _minutes_to(study, (0.92, 0.93) if family == 'b0' else (0.94, 0.95, 0.955, 0.96)),
+           'family': family, 'cap': cap if family != 'b0' else None, 'max_epochs': max_epochs if family != 'b0' else None,
            # the search's own finds, apart from the starting point it was given
            'best_other_than_start': max(others) if others else None, 'others_at_92': sum(v >= 0.92 for v in others),
            'completed': states.count('COMPLETE'), 'pruned': states.count('PRUNED'), 'failed': states.count('FAIL'),

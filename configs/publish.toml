@@ -1,0 +1,6 @@
+model_repo = "thearn/cifar10-resnet9"
+space_repo = "thearn/cifar10-resnet9-demo"
+license = "apache-2.0"
+dataset = "uoft-cs/cifar10"       # the hub id of the source dataset, for the model card's metadata
+tags = ["image-classification", "cifar10", "resnet9", "optuna", "pytorch_model_hub_mixin", "model_hub_mixin"]
+pipeline_tag = "image-classification"

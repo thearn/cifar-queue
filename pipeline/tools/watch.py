@@ -1,12 +1,13 @@
 """Watch a search as it runs: trials done, running and failed (by device), trials an hour, the best so far and the
-top five. Reads an Optuna study's SQLite file: mode 3's (results/distributed-study.db, written here as trials end) or
-mode 2's (the job's study.db, brought back from the VM every two minutes while it runs: job.json ``watch``).
+top five. Reads an Optuna study's SQLite file: mode 3's (results/tune-study.db, written here as trials end; mode 3's
+first runs are in results/distributed-study.db) or mode 2's (the job's study.db, brought back from the VM every two minutes while it runs: job.json ``watch``).
 
-    python scripts/watch.py                      # the newest study of results/distributed-study.db
-    python scripts/watch.py --mode2              # the running mode 2 job's study
-    python scripts/watch.py --once
+    python pipeline/tools/watch.py               # the newest study of results/tune-study.db
+    python pipeline/tools/watch.py results/distributed-study.db
+    python pipeline/tools/watch.py --mode2       # the running mode 2 job's study
+    python pipeline/tools/watch.py --once
 
-For charts in a browser: uvx optuna-dashboard sqlite:///results/distributed-study.db
+For charts in a browser: uvx optuna-dashboard sqlite:///results/tune-study.db
 """
 import argparse
 import collections
@@ -19,12 +20,13 @@ from pathlib import Path
 
 import optuna
 
-RESULTS = Path(__file__).resolve().parents[1] / 'results'
+RESULTS = Path(__file__).resolve().parents[2] / 'results'
 KEYS = ('width', 'epochs', 'optimizer', 'sgd_lr', 'adamw_lr', 'batch_size', 'activation', 'mix', 'ema')
 
 
 def newest_mode2_db() -> Path | None:
-    dbs = sorted((RESULTS / 'jobs' / 'on-vm').glob('*/study.db'), key=lambda p: p.stat().st_mtime)
+    dbs = sorted([*(RESULTS / 'jobs' / 'on-vm').glob('*/study.db'), *(RESULTS / 'jobs' / 'tune_on_vm').glob('*/study.db')],
+                 key=lambda p: p.stat().st_mtime)
     return dbs[-1] if dbs else None
 
 
@@ -79,7 +81,7 @@ if __name__ == '__main__':
     a = ap.parse_args()
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     while True:
-        db = a.db or (newest_mode2_db() if a.mode2 else RESULTS / 'distributed-study.db')
+        db = a.db or (newest_mode2_db() if a.mode2 else RESULTS / 'tune-study.db')
         text = report(db) if db and db.exists() else f'no study yet ({db})'
         if a.once:
             print(text)

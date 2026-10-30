@@ -1,5 +1,7 @@
+data/*
+!data/manifests/
 results/
-data/*.npz
 __pycache__/
 *.egg-info/
 .pytest_cache/
+.venv/

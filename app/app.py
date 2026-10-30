@@ -1,6 +1,6 @@
 """The CIFAR-10 ResNet-9 as a Gradio app: an image (any size, centre-cropped to a square and area-averaged down to
-32x32, the network's input), its five likeliest classes. The model is ``CIFARQ_MODEL`` (a hub repo id or a local
-directory; default the published model). The examples are the first test image of each class, shown 4x nearest-
+32x32, the network's input), its five likeliest classes. The model is ``MODEL`` or ``CIFARQ_MODEL`` (a hub repo id
+or a local directory; default the published model). The examples are the first test image of each class, shown 4x nearest-
 neighbour, which the area-averaging takes back to the original pixels exactly."""
 import os
 from pathlib import Path
@@ -11,7 +11,7 @@ from PIL import Image
 
 from cifarq.hub import ResNet9
 
-MODEL = os.environ.get('CIFARQ_MODEL', 'thearn/cifar10-resnet9')
+MODEL = os.environ.get('MODEL') or os.environ.get('CIFARQ_MODEL', 'thearn/cifar10-resnet9')
 net = ResNet9.from_pretrained(MODEL).eval()
 EXAMPLES = sorted(str(p) for p in (Path(__file__).parent / 'examples').glob('*.png'))
 
