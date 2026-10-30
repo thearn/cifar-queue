@@ -215,9 +215,12 @@ def classify(row: dict, ref: dict, param_cap: int | None = None) -> str:
         base = ref['runs'].get(name)
         if base is None:
             continue
-        for k in ('rss_mb', 'peak_gpu_mb'):                  # (resident CPU memory and peak GPU memory: E0.1-a3)
-            if k in r and k in base and r[k] > 1.05 * base[k] + 1.0:   # (+1 MB: the counters' granularity)
-                return 'P'
+        # GPU: peak allocations, deterministic (+1 MB: granularity). CPU: resident memory at batch 1 only, +5 MB, the
+        # spread of repeats (E0.1-a3: 43 +- 3 MB for B0; at batch 256 the allocator's per-thread caches vary 17 %)
+        if 'peak_gpu_mb' in r and 'peak_gpu_mb' in base and r['peak_gpu_mb'] > 1.05 * base['peak_gpu_mb'] + 1.0:
+            return 'P'
+        if name.endswith('_b1') and 'rss_mb' in r and 'rss_mb' in base and r['rss_mb'] > 1.05 * base['rss_mb'] + 5.0:
+            return 'P'
     return 'S'
 
 
