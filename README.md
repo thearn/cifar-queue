@@ -125,6 +125,34 @@ differ by about 0.2 points, which is the floor for any effect claimed above.
 
 The published model on the hub is still the ResNet-9.
 
+## Results (2026-11-05): the accuracy / compute front of the flip-equivariant airbench
+
+The two-objective study the 2026-10-30 session planned (`pipeline/57_front.py`): two-seed one-view validation against
+MACs a view, the 1.94 M flip-equivariant airbench at 100 epochs with airbench96 distillation, widths down to half the
+finalist's. It started from that session's five saved runs as completed trials (its own study had been cleaned away),
+and ran 16 new trials: 4 on a Colab G4, then 12 across a Colab G4, a RunPod A40 and a Compute Engine spot L4 at once.
+Validation only; the test set was not opened.
+
+| MACs a view | Validation, 1 view | Parameters | From |
+|---|---|---|---|
+| 66 M | 94.50 % | 0.49 M | the finalist at half its widths |
+| **83 M** | **95.05 %** | 1.13 M | a new trial |
+| 149 M | 95.08 % | 1.35 M | a new trial |
+| 169 M | 95.26 % | 1.65 M | a new trial |
+| 237 M | 95.49 % | 1.94 M | the session's finalist (FIN) |
+| 330 M | 95.49 % | 1.81 M | a session search trial (T14; level with FIN within noise) |
+| 358 M | 95.73 % | 1.99 M | the session's best search trial (T39) |
+
+At about a third of the finalist's compute (83 M MACs) the search found a network 0.44 points behind it, where
+narrowing the finalist itself gave 94.97 % at 135 M. Points closer than about 0.2 points are within run-to-run noise.
+Per trial the G4 was both fastest and cheapest: $0.047 a trial (7 trials, Colab units), against $0.083 on the RunPod
+A40 and $0.10 on the spot L4 (3 and 2 trials; each VM's time includes its cold start, 42-158 s to ready, and its idle
+tail), whose cards ran power-capped and 3-4 times slower; phase 2 cost $0.79 in all (`runq spend`).
+The front, every trial and each point's complete training arguments are in `docs/front/` (`pareto.json`,
+`trials.csv`, `front.svg`; `pipeline/tools/export_front.py` writes them again after more trials).
+
+![front](docs/front/front.svg)
+
 ## References
 
 - D. Page, "How to train your ResNet" (Myrtle.ai, 2018-2019); [DAWNBench CIFAR-10](https://dawn.cs.stanford.edu/cifar10-training)

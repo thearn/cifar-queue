@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="440" font-family="sans-serif" font-size="12">
+<rect width="720" height="440" fill="white"/>
+<line x1="60" y1="380" x2="660" y2="380" stroke="#444"/>
+<line x1="60" y1="60" x2="60" y2="380" stroke="#444"/>
+<text x="360.0" y="422" text-anchor="middle">MACs a view (millions)</text>
+<text x="18" y="220.0" text-anchor="middle" transform="rotate(-90 18 220.0)">validation accuracy, one view, two seeds (%)</text>
+<text x="360.0" y="24" text-anchor="middle" font-size="14">Flip-equivariant airbench, 100 epochs: accuracy / compute front</text>
+<text x="60" y="396" text-anchor="middle" fill="#555">0</text>
+<text x="137" y="396" text-anchor="middle" fill="#555">50</text>
+<text x="215" y="396" text-anchor="middle" fill="#555">100</text>
+<text x="292" y="396" text-anchor="middle" fill="#555">150</text>
+<text x="369" y="396" text-anchor="middle" fill="#555">200</text>
+<text x="446" y="396" text-anchor="middle" fill="#555">250</text>
+<text x="524" y="396" text-anchor="middle" fill="#555">300</text>
+<text x="601" y="396" text-anchor="middle" fill="#555">350</text>
+<text x="54" y="381" text-anchor="end" fill="#555">94.0</text>
+<line x1="60" y1="377" x2="660" y2="377" stroke="#eee"/>
+<text x="54" y="348" text-anchor="end" fill="#555">94.2</text>
+<line x1="60" y1="344" x2="660" y2="344" stroke="#eee"/>
+<text x="54" y="315" text-anchor="end" fill="#555">94.4</text>
+<line x1="60" y1="311" x2="660" y2="311" stroke="#eee"/>
+<text x="54" y="282" text-anchor="end" fill="#555">94.6</text>
+<line x1="60" y1="278" x2="660" y2="278" stroke="#eee"/>
+<text x="54" y="249" text-anchor="end" fill="#555">94.8</text>
+<line x1="60" y1="245" x2="660" y2="245" stroke="#eee"/>
+<text x="54" y="217" text-anchor="end" fill="#555">95.0</text>
+<line x1="60" y1="213" x2="660" y2="213" stroke="#eee"/>
+<text x="54" y="184" text-anchor="end" fill="#555">95.2</text>
+<line x1="60" y1="180" x2="660" y2="180" stroke="#eee"/>
+<text x="54" y="151" text-anchor="end" fill="#555">95.4</text>
+<line x1="60" y1="147" x2="660" y2="147" stroke="#eee"/>
+<text x="54" y="118" text-anchor="end" fill="#555">95.6</text>
+<line x1="60" y1="114" x2="660" y2="114" stroke="#eee"/>
+<text x="54" y="85" text-anchor="end" fill="#555">95.8</text>
+<line x1="60" y1="81" x2="660" y2="81" stroke="#eee"/>
+<circle cx="426.9" cy="132.2" r="4" fill="#d4b59b" opacity="0.8"/>
+<circle cx="613.0" cy="92.8" r="4" fill="#d4b59b" opacity="0.8"/>
+<circle cx="605.3" cy="139.3" r="4" fill="#d4b59b" opacity="0.8"/>
+<circle cx="570.4" cy="131.7" r="4" fill="#d4b59b" opacity="0.8"/>
+<circle cx="615.6" cy="144.8" r="4" fill="#d4b59b" opacity="0.8"/>
+<circle cx="268.9" cy="217.5" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="162.3" cy="294.7" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="346.9" cy="232.3" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="320.8" cy="169.9" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="466.2" cy="194.6" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="358.2" cy="192.9" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="320.8" cy="219.2" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="195.7" cy="268.4" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="332.0" cy="178.2" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="320.8" cy="194.6" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="434.6" cy="165.0" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="277.5" cy="219.2" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="346.9" cy="224.1" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="188.9" cy="204.4" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="287.9" cy="215.9" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="291.0" cy="199.5" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="167.0" cy="347.2" r="4" fill="#9bb7d4" opacity="0.8"/>
+<polyline fill="none" stroke="#c0392b" stroke-width="2" points="162.3,294.7 188.9,204.4 291.0,199.5 320.8,169.9 426.9,132.2 570.4,131.7 613.0,92.8"/>
+<circle cx="162.3" cy="294.7" r="5" fill="#c0392b"/>
+<text x="169.3" y="287.7" fill="#c0392b">66M 94.50%</text>
+<circle cx="188.9" cy="204.4" r="5" fill="#c0392b"/>
+<text x="195.9" y="197.4" fill="#c0392b">83M 95.05%</text>
+<circle cx="291.0" cy="199.5" r="5" fill="#c0392b"/>
+<text x="298.0" y="192.5" fill="#c0392b">149M 95.08%</text>
+<circle cx="320.8" cy="169.9" r="5" fill="#c0392b"/>
+<text x="327.8" y="162.9" fill="#c0392b">169M 95.26%</text>
+<circle cx="426.9" cy="132.2" r="5" fill="#c0392b"/>
+<text x="433.9" y="125.2" fill="#c0392b">237M 95.49%</text>
+<circle cx="570.4" cy="131.7" r="5" fill="#c0392b"/>
+<text x="577.4" y="124.7" fill="#c0392b">330M 95.49%</text>
+<circle cx="613.0" cy="92.8" r="5" fill="#c0392b"/>
+<text x="620.0" y="85.8" fill="#c0392b">358M 95.73%</text>
+<text x="660" y="52" text-anchor="end" fill="#555">blue: new trials; tan: the 2026-10-30 session's runs; red: the front</text></svg>
