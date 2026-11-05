@@ -53,26 +53,10 @@ class Direct(Executor):
 
 
 def ensure_executors(targets: dict):
-    """Register the Colab executors ``targets`` names (no VM until a job needs one), each with as many parallel slots
-    as the stage gives it."""
+    """Register the executors ``targets`` names from configs/compute.toml's [executors] (any provider: colab, gce, or
+    sky with its clouds, spot and store; ``runq clouds``), each with as many parallel slots as the stage gives it."""
     from runq import executors
-    known = executors.load()
-    for t, slots in targets.items():
-        if not t.startswith('colab:'):
-            continue
-        name = t[6:]
-        rec = known.get(name)
-        if rec is None:
-            spec = COMPUTE['executors'][name]
-            # any provider (runq clouds): colab (default), gce, or sky with its clouds (infra), spot and store
-            kind = spec.get('provider', 'colab')
-            options = ({'infra': spec.get('infra'), 'spot': spec.get('spot'), 'vm_idle_min': spec.get('vm_idle_min')}
-                       if kind == 'sky' else {'vm_idle_min': spec.get('vm_idle_min')} if kind == 'gce' else None)
-            executors.add(name, gpu=spec['gpu'], idle_stop_minutes=spec.get('idle_minutes', 5), parallel=slots,
-                          shape=spec.get('shape'), provider_kind=kind, options=options, store=spec.get('store'),
-                          log=lambda s: None)
-        elif slots > 1 and rec.get('parallel') != slots:
-            executors.update(name, parallel=slots)
+    executors.ensure(targets, COMPUTE['executors'], log=lambda s: None)
 
 
 def stage_targets(stage: str, override: list[str] | None = None) -> dict:
