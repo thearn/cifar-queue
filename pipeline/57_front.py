@@ -68,6 +68,8 @@ def study_for(storage: str, seed: int, resume: bool) -> optuna.Study:
 
 
 if __name__ == '__main__':
+    import sys
+    sys.stdout.reconfigure(line_buffering=True)             # (its log is followed while it runs: a line a trial)
     ap = argparse.ArgumentParser()
     ap.add_argument('--trials', type=int, default=16)
     targets_arg(ap)
