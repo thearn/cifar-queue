@@ -1,7 +1,7 @@
 """Where early stopping is safe for this model: from complete learning curves (every trial run to its end: the mode 3
 job directories' result.json histories, or a no-pruning mode 2 study's), the rank correlation of validation accuracy
 part-way through with its final value, how many of the final top 10 % a cut there would lose, and successive halving
-replayed for a few rung settings (solve_queue.hpo.rung_check, simulate_rungs). tune.PRUNE was chosen from this.
+replayed for a few rung settings (runq.hpo.rung_check, simulate_rungs). tune.PRUNE was chosen from this.
 
     python pipeline/tools/rung_check.py [JOB_DIRS_ROOT ...]
 """
@@ -10,7 +10,7 @@ import math
 import sys
 from pathlib import Path
 
-from solve_queue.hpo import rung_check, simulate_rungs
+from runq.hpo import rung_check, simulate_rungs
 
 roots = [Path(a) for a in sys.argv[1:]] or [Path(__file__).resolve().parents[2] / 'results' / 'jobs' / d for d in ('distributed', 'tune')]
 curves = []

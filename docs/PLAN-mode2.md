@@ -8,13 +8,13 @@
 
 Written 2026-10-29, at the user's request ("make sure that's as efficient as we can make it"; "make sure ASHA/hyperband
 work as part of that effort"). Mode 2 is one queue job on one Colab VM: Optuna (or Ray Tune) runs there, its trials
-as processes on the VM's GPU (`tune.on_vm`, `solve_queue.parallel.GPUProcessExecutor`).
+as processes on the VM's GPU (`tune.on_vm`, `runq.parallel.GPUProcessExecutor`).
 
 Efficiency here means three things, measured separately:
 
-1. **The card kept busy**: the GPU's busy fraction over the job (`usage.json`, solve-queue's sampler), and training
+1. **The card kept busy**: the GPU's busy fraction over the job (`usage.json`, runq's sampler), and training
    time over wall time.
-2. **Trials an hour and units a trial** on each card (L4, G4, A100), solve-queue's `cards.py` rates.
+2. **Trials an hour and units a trial** on each card (L4, G4, A100), runq's `cards.py` rates.
 3. **The search's yield**: the best validation accuracy reached for a given number of units. Early stopping (ASHA,
    Hyperband) moves this one most: a trial that is plainly worse after 3 of 24 epochs stops there.
 
@@ -26,8 +26,8 @@ Trials run to their full epochs whatever their curve; nothing prunes. `hpo.py` s
 values is not passed through (a trial reports when it ends)".
 
 Mode 3 (trials as queue jobs), the same day as this plan: 85 % training time on an L4 in steady state with
-solve-queue's persistent worker (69 % without); about 12 s lost a trial (8.5 s inside the job, 3.4 s between jobs).
-With two trials in flight on the L4 taking turns at the card (`solve_queue.gpu.device_turn`), 94 % training time, 53
+runq's persistent worker (69 % without); about 12 s lost a trial (8.5 s inside the job, 3.4 s between jobs).
+With two trials in flight on the L4 taking turns at the card (`runq.gpu.device_turn`), 94 % training time, 53
 trials an hour (16 trials in steady state; images per second at each width unchanged, so the turns held). Mode 2's
 pool can use the same turns (step 3).
 
@@ -51,7 +51,7 @@ pool can use the same turns (step 3).
    - Acceptance: a run whose VM is stopped mid-way continues on a new one with no completed trial lost.
 3. **The pool's gaps.**
    - Each trial's set-up (the model, the data to the GPU, the CUDA context of a new process) idles the card.
-   - Two pool processes taking turns at the card (`solve_queue.gpu.device_turn`, `SOLVEQ_DEVICE_TURNS=1`), so the next
+   - Two pool processes taking turns at the card (`runq.gpu.device_turn`, `RUNQ_DEVICE_TURNS=1`), so the next
      trial's set-up overlaps the current one's training.
    - The arrays cached per process (done, `data.load`).
    - Acceptance: GPU busy above 95 % on the L4 with a mixed space, and trials an hour up by the set-up time's share.
@@ -122,8 +122,8 @@ This is the "slow starter" problem of successive halving, and Hyperband and Ray'
 
 | Fix | What it does | Fits here because | Cost |
 |---|---|---|---|
-| A first rung from data | rank correlation of accuracy at each percent of training against final accuracy, from completed curves; no pruning before it is high | we have full curves (the no-pruning run) | small: solve-queue `hpo` |
-| Soft ranking (PASHA, ICLR 2023) | ties within ε (0.025 suggested) count as equal at a rung; the maximum budget grows only while the top ranks keep changing | SGD noise between close configurations; PASHA reports ~1/3 of ASHA's time at no accuracy loss | small: a pruner in solve-queue |
+| A first rung from data | rank correlation of accuracy at each percent of training against final accuracy, from completed curves; no pruning before it is high | we have full curves (the no-pruning run) | small: runq `hpo` |
+| Soft ranking (PASHA, ICLR 2023) | ties within ε (0.025 suggested) count as equal at a rung; the maximum budget grows only while the top ranks keep changing | SGD noise between close configurations; PASHA reports ~1/3 of ASHA's time at no accuracy loss | small: a pruner in runq |
 | Best-so-far smoothing | report the running maximum of validation accuracy | high-rate epochs jump around | trivial |
 | A schedule-free optimizer (Defazio et al., NeurIPS 2024; `schedulefree`) | evaluate the averaged iterate: a model that is good at any point, with no decay phase to wait for | removes the cause: early accuracy then predicts final accuracy | moderate: an optimizer option in `train`, and a check that it trains as well |
 | Recurring learning rate (MORL, WACV 2023) | each successive-halving rung trains with a schedule that decays to its own end, re-warmed at the next | made for exactly this slow-starter case with CNNs | larger: trials resumable rung by rung |
@@ -168,7 +168,7 @@ default successive halving again, which this time kept Page's recipe: how much p
 
 **Order adopted.** Step 1 becomes:
 1. Measure the rank correlation from the no-pruning run's curves, and set the first rung from it.
-2. Add best-so-far smoothing and a soft-ranking ASHA (PASHA's rule) in solve-queue.
+2. Add best-so-far smoothing and a soft-ranking ASHA (PASHA's rule) in runq.
 3. Re-run ASHA and Hyperband against no pruning.
 
 Then:
@@ -310,7 +310,7 @@ after the G4 and A100 40 GB runs: the A100 80 GB, T4 and 45-minute L4 runs would
 The G4 is the card for mode 2: twice the A100's trials, the best results, no dearer a trial. Three of the four best
 configurations were schedule-free AdamW (the G4's two, the A100's second), the others AdamW with a batch-norm or
 cosine head: schedule-free training, behind Page's schedule untuned (row 4), won once the search could tune it. Units
-measured with `solveq colab hours`; the cancelled A100 80 GB run cost 1.2.
+measured with `runq colab hours`; the cancelled A100 80 GB run cost 1.2.
 
 **9. The G4 probe** (`cifarq.pbt.probe` on the 95.12 % configuration: schedule-free AdamW, CELU, width 48, batch 256,
 30 epochs, 22 s a training).
@@ -347,6 +347,6 @@ For 22-second runs already tuned by a 177-trial search, changing settings during
 | Change | Repository |
 |---|---|
 | per-epoch reports, the pruned trial's result, Ray Tune driver | cifar-queue (`train.py`, `tune.py`, scripts) |
-| a trial process's handle on the study (report and prune from a pool process), pruner options in `optuna_optimize` | solve-queue (`hpo.py`): any project's mode 2 needs it |
-| `device_turn`, the worker, checkpoints, `cards.set_slots` | solve-queue (done or in place) |
-| the gRPC storage over SSH | solve-queue (`hpo.py` and the transport), later |
+| a trial process's handle on the study (report and prune from a pool process), pruner options in `optuna_optimize` | runq (`hpo.py`): any project's mode 2 needs it |
+| `device_turn`, the worker, checkpoints, `cards.set_slots` | runq (done or in place) |
+| the gRPC storage over SSH | runq (`hpo.py` and the transport), later |

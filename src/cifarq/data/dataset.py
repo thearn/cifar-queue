@@ -1,7 +1,7 @@
 """The dataset: CIFAR-10's train, validation and test images and labels (uint8, 32x32x3) in one array file
 ``data/dataset/dataset-<sha12>.npz``, with each image's id (``train:<index>`` or ``test:<index>`` in the hub's files)
 and the class names. ``data/manifests/dataset.json`` names it, its hash and the images in each split; the manifest is
-committed, the array file is not. Jobs name the file as their ``data`` (solve-queue sends it to each VM once, by its
+committed, the array file is not. Jobs name the file as their ``data`` (runq sends it to each VM once, by its
 content).
 
 The split is not the template's hash split: the validation images are the first 5000 of
@@ -71,7 +71,7 @@ _LOADED: dict = {}
 
 
 def load(file: Path | str | None = None) -> dict:
-    """The arrays, kept in this process after the first load: on a VM, solve-queue's persistent worker loads them once
+    """The arrays, kept in this process after the first load: on a VM, runq's persistent worker loads them once
     (``warm``) and every trial it forks reads them without a copy."""
     key = str(Path(file or path()).resolve())
     if key not in _LOADED:

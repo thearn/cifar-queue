@@ -34,7 +34,7 @@ if __name__ == '__main__':
     ap.add_argument('--startup', type=int, default=16, help="random trials before TPE models (a 30-minute L4 search fits ~30)")
     ap.add_argument('--minutes', type=float, help='stop asking for trials after this long (a fixed budget)')
     ap.add_argument('--concurrent', type=int, help="trainings at once instead of measuring it (default: the card's stored "
-                    "count, solve-queue cards.slots(..., 'cifar-trial'), else measured and stored)")
+                    "count, runq cards.slots(..., 'cifar-trial'), else measured and stored)")
     ap.add_argument('--gpu-mb', type=int, default=None, help='the job\'s GPU memory (default: the stage\'s; 7000 on local)')
     ap.add_argument('--resume', action='store_true', help="continue the latest mode 2 run's study (the last study.db its "
                                                             'job brought back) on a new job, after the old one died')
@@ -57,7 +57,7 @@ if __name__ == '__main__':
         spec = COMPUTE['executors'][target[6:]]
         gpu, shape = spec['gpu'], spec.get('shape')
         if a.concurrent is None:
-            from solve_queue import cards
+            from runq import cards
             stored = (cards.card(gpu, shape).get('slots') or {}).get(slot_key)
             if stored:
                 a.concurrent = stored
@@ -123,8 +123,8 @@ if __name__ == '__main__':
         result = future.result()
     result['wall_seconds_from_submit'] = round(time.time() - t0, 1)
     if gpu and not a.concurrent and result.get('calibration') and not result['calibration'][0].get('given'):
-        # the card's measured trainings at once, kept for the next run (solve-queue cards.json: --concurrent unneeded)
-        from solve_queue import cards
+        # the card's measured trainings at once, kept for the next run (runq cards.json: --concurrent unneeded)
+        from runq import cards
         cards.set_slots(gpu, shape, slot_key, int(result['concurrent']))
         print(f'recorded: {gpu} runs {result["concurrent"]} cifar trainings at once', flush=True)
     # (the study stays in the job's directory, which the record names: no shared copy for a later run to overwrite;

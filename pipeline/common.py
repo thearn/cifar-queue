@@ -1,4 +1,4 @@
-"""What the pipeline's stages share: an executor per stage from configs/compute.toml (solve-queue's ``QueueExecutor``
+"""What the pipeline's stages share: an executor per stage from configs/compute.toml (runq's ``QueueExecutor``
 over the stage's targets, or ``Direct``: in this process, no queue), and the run record each stage writes to
 results/<stage>/<time>.json (git commit and dirty flag, dataset hash, versions, settings, results)."""
 from __future__ import annotations
@@ -20,7 +20,7 @@ from cifarq.data import dataset
 ROOT, RESULTS = paths.ROOT, paths.RESULTS
 SRC = Path(import_module('cifarq').__file__).resolve().parents[1]
 COMPUTE = paths.config('compute')
-os.environ.setdefault('SOLVEQ_SESSION', COMPUTE['session'])
+os.environ.setdefault('RUNQ_SESSION', COMPUTE['session'])
 
 
 class Direct(Executor):
@@ -55,7 +55,7 @@ class Direct(Executor):
 def ensure_executors(targets: dict):
     """Register the Colab executors ``targets`` names (no VM until a job needs one), each with as many parallel slots
     as the stage gives it."""
-    from solve_queue import executors
+    from runq import executors
     known = executors.load()
     for t, slots in targets.items():
         if not t.startswith('colab:'):
@@ -85,7 +85,7 @@ def executor(stage: str, targets: dict, data=(), send=(), **hints) -> Executor:
         if len(targets) > 1:
             raise SystemExit('direct runs in this process: it cannot share a stage with queue targets')
         return Direct(root)
-    from solve_queue.futures import QueueExecutor
+    from runq.futures import QueueExecutor
     ensure_executors(targets)
     return QueueExecutor(root, targets=targets, path=[SRC, *send], data=[str(d) for d in data], **hints)
 

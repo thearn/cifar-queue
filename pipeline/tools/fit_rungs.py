@@ -2,7 +2,7 @@
 with a report-only pruner (``--pruner rungs --pruner-settings '{"rungs": [10], "keep": 1.0, "min_trials": 1}'``: every
 epoch reported to the study, nothing cut), the complete trials' curves on a 5 % grid of training, the rank
 correlation of each point with the final value, and successive halving replayed for candidate rung settings
-(solve_queue.hpo.rung_check, simulate_rungs). Recommends the cheapest setting that keeps the single best trial and at
+(runq.hpo.rung_check, simulate_rungs). Recommends the cheapest setting that keeps the single best trial and at
 least ``--keep-top`` of the final top 10 %, as JSON for ``55_tune_on_vm.py --pruner rungs --pruner-settings``.
 
     python pipeline/tools/fit_rungs.py results/jobs/tune_on_vm/00012-on_vm/study.db [--keep-top 0.9]
@@ -14,7 +14,7 @@ import itertools
 import json
 
 import optuna
-from solve_queue.hpo import rung_check, simulate_rungs
+from runq.hpo import rung_check, simulate_rungs
 
 GRID = list(range(5, 101, 5))
 CANDIDATES = [list(r) for n in (1, 2, 3) for r in itertools.combinations((10, 20, 30, 40, 50, 60, 70, 80), n)]

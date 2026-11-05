@@ -5,7 +5,7 @@ The decisions the code depends on (the template's `docs/PLAN.md` sections). Mode
 
 ## Problem
 
-A test problem for solve-queue: an image classifier with a well-known reference, small enough that a search of
+A test problem for runq: an image classifier with a well-known reference, small enough that a search of
 dozens of trainings fits in an hour, exercising everything an ML workload needs from the queue (an environment and a
 dataset shipped to remote GPUs, trainings as function calls, a search spread over several GPUs, a whole search inside
 one VM job). "Good enough" is matching Page's recipe on the same split; beating it is a bonus.

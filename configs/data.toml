@@ -28,4 +28,4 @@ validation = 5000
 seed = 1234
 
 [storage]
-bucket = ""                       # unused: solve-queue sends the prepared dataset to each VM, by its content
+bucket = ""                       # unused: runq sends the prepared dataset to each VM, by its content

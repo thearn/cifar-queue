@@ -3,7 +3,7 @@
 # run at once on that target. Resource hints are the job's peak needs, for the queue's admission. Command-line
 # --targets on a stage overrides its line here. One training at a time was best on every card measured (README).
 
-session = "cifar"                         # SOLVEQ_SESSION: labels, solveq news/brief/wait follow it
+session = "cifar"                         # RUNQ_SESSION: labels, runq news/brief/wait follow it
 
 [executors]                               # registered when a stage names them (no VM until a job needs one)
 cifar-l4a = { gpu = "L4", idle_minutes = 5 }

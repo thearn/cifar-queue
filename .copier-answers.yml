@@ -10,4 +10,4 @@ package_name: cifarq
 project_name: cifar-queue
 python_version: '3.12'
 repo_name: cifar-queue
-solve_queue_path: ../solve-queue
+runq_path: ../../solve-queue

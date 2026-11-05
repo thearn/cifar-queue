@@ -22,7 +22,7 @@ import optuna
 
 from common import RESULTS, ROOT, dataset_file, executor, record, stage_targets, targets_arg
 from cifarq import tune
-from solve_queue.hpo import make_pruner, optuna_optimize
+from runq.hpo import make_pruner, optuna_optimize
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
@@ -30,7 +30,7 @@ if __name__ == '__main__':
     targets_arg(ap)
     ap.add_argument('--storage', type=Path, default=RESULTS / 'tune-study.db', help='the study database (SQLite file)')
     ap.add_argument('--resume', nargs='?', const='latest', default=None, help='continue a study (its name, or the latest)')
-    ap.add_argument('--prune', default=None, help='a solve_queue.hpo.PRUNERS name (rungs: tune.PRUNE settings)')
+    ap.add_argument('--prune', default=None, help='a runq.hpo.PRUNERS name (rungs: tune.PRUNE settings)')
     ap.add_argument('--minutes', type=float, default=None, help='no new trial after this long')
     ap.add_argument('--seed', type=int, default=0, help="the sampler's seed (repeat cold runs with several)")
     ap.add_argument('--startup', type=int, default=16, help='random trials before TPE models')

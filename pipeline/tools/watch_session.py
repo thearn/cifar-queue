@@ -1,6 +1,6 @@
 """Watch a session's queue jobs and end when one needs attention (run in the background, so its end wakes whoever
-started it): the session's active jobs (queue labels starting ``SESSION/``) handed to ``solveq wait --until
-first-failure --stall-min M``, again as new ones are submitted. Ends with ``solveq wait``'s code on a failure (1) or a
+started it): the session's active jobs (queue labels starting ``SESSION/``) handed to ``runq wait --until
+first-failure --stall-min M``, again as new ones are submitted. Ends with ``runq wait``'s code on a failure (1) or a
 stall (2), and with 0 after ``--idle-min`` minutes with no active job (the queue ran dry: time for the next step).
 
     python pipeline/tools/watch_session.py fparch [--stall-min 15] [--idle-min 20]
@@ -14,7 +14,7 @@ import time
 
 
 def active(session: str) -> list[str]:
-    """The ids of the session's queued and running jobs (pueue's task list: discovery only, the waiting is solveq's)."""
+    """The ids of the session's queued and running jobs (pueue's task list: discovery only, the waiting is runq's)."""
     out = subprocess.run(['pueue', 'status', '--json'], capture_output=True, text=True)
     if out.returncode:
         return []
@@ -44,7 +44,7 @@ def main():
             continue
         idle_since = None
         print(f'{time.strftime("%H:%M")} waiting on {" ".join(ids)}', flush=True)
-        r = subprocess.run(['solveq', 'wait', *ids, '--until', 'first-failure', '--stall-min', str(a.stall_min)])
+        r = subprocess.run(['runq', 'wait', *ids, '--until', 'first-failure', '--stall-min', str(a.stall_min)])
         if r.returncode in (1, 2):
             print(f'{time.strftime("%H:%M")} {"a failure" if r.returncode == 1 else "a stall"} among {" ".join(ids)}', flush=True)
             raise SystemExit(r.returncode)

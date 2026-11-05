@@ -19,7 +19,7 @@
 
 The model is in ``model``, the accuracy in ``evaluate``. The images live on the GPU as uint8; the arithmetic is bf16
 under autocast. ``device='cpu'`` (or ``auto`` without a GPU) runs the same code on the CPU, for the tests. ``train(**hyperparameters)`` is what a
-queue job calls (``solve_queue.function_job``); its return value, a dict of plain numbers, is the job's result.
+queue job calls (``runq.function_job``); its return value, a dict of plain numbers, is the job's result.
 """
 from __future__ import annotations
 
@@ -121,7 +121,7 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     """Train one model with ``DEFAULTS`` updated by ``hyperparameters`` (an unknown name is an error); its validation
     and test accuracy, time and throughput, and the per-epoch history. ``save``: a directory (relative: in the job's
     directory, which comes back with the job) to write the trained network to as a ``hub.ResNet9`` (the EMA's weights
-    when there is one). ``report``: early stopping (``solve_queue.hpo.reporter``: a study's spec, or a callable
+    when there is one). ``report``: early stopping (``runq.hpo.reporter``: a study's spec, or a callable
     ``(step, value) -> stop``): after each epoch the validation accuracy is reported at the percent of training done,
     and a trial told to stop returns at once with ``pruned: True`` (no test evaluation). ``device``: ``cuda``, ``cpu``
     or ``auto`` (the GPU when there is one); not a hyperparameter, so not in the result's ``hyperparameters``."""
@@ -192,7 +192,7 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
         return evaluate.accuracy(ema.module if ema is not None else net, x, y, norm, h['tta_flip'])
 
     try:                                                     # (taking turns at the card with other trials: opt-in)
-        from solve_queue.gpu import device_turn
+        from runq.gpu import device_turn
     except ImportError:
         device_turn = contextlib.nullcontext
     turn = device_turn(); turn.__enter__()
@@ -201,7 +201,7 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     elif callable(report):
         stop_here = report
     else:
-        from solve_queue.hpo import reporter                 # a study's spec: only inside the queue's trials
+        from runq.hpo import reporter                 # a study's spec: only inside the queue's trials
         stop_here = reporter(report)
     pruned = False
     history, t0 = [], time.time()

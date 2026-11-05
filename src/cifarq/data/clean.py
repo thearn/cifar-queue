@@ -50,7 +50,7 @@ def clean_shard(raw: str, rules: dict, out: str | None = None) -> dict:
 def run(executor=None, force: bool = False) -> dict:
     """Decode every raw file into ``data/clean/<split>.npz``, check the result (``validate.cleaned``) and write
     ``data/manifests/clean.json``; the manifest. ``executor``: a ``concurrent.futures`` executor taking
-    ``'module:function'`` (a solve-queue ``QueueExecutor``: one job per file; the pipeline's in-process one), each
+    ``'module:function'`` (a runq ``QueueExecutor``: one job per file; the pipeline's in-process one), each
     future's ``job`` the directory the file was written in; none: here, one file after another."""
     cfg = paths.config('data')
     raw = paths.read_manifest('raw') or {}

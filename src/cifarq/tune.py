@@ -120,7 +120,7 @@ def train_params(params: dict) -> dict:
     return space(optuna.trial.FixedTrial(params), schedule_free='schedule_free' in params)
 
 
-# on a VM a trial runs as a fork of solve-queue's persistent worker, which imported torch and the training code and
+# on a VM a trial runs as a fork of runq's persistent worker, which imported torch and the training code and
 # loaded the arrays once (the local GPU's jobs run as their own processes either way)
 WORKER = {'preload': ['torch', 'torch.nn.functional', 'cifarq.train', 'cifarq.data.dataset:warm']}
 
@@ -131,7 +131,7 @@ def job_options(params: dict) -> dict:
     w, e = params.get('width', 32), params.get('epochs', 10)
     # (two trials on a VM take turns at its card: the next one's set-up overlaps this one's training)
     return {'minutes': round(1 + e * (w / 32) ** 2 * 0.06, 1), 'gpu_mb': 1500 + 40 * w, 'worker': WORKER,
-            'vm_env': {'SOLVEQ_DEVICE_TURNS': '1'}}
+            'vm_env': {'RUNQ_DEVICE_TURNS': '1'}}
 
 
 # early stopping chosen from this model's own curves (pipeline/tools/rung_check.py on 161 complete trials, 2026-10-29):
@@ -189,12 +189,12 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
     ``study.db`` in the job's directory (brought back with the job). ``resume_from``: a study database of a run that
     died (the last ``study.db`` its job brought back while it ran, sent as this job's data): copied in and continued,
     its trials in flight run again (``recover_running``). ``pruner``: early stopping by the study (``asha``,
-    ``hyperband``, ``median``, ``none``: ``solve_queue.hpo.PRUNERS``), each trial reporting its validation accuracy after
+    ``hyperband``, ``median``, ``none``: ``runq.hpo.PRUNERS``), each trial reporting its validation accuracy after
     every epoch; ``rungs`` is the one chosen for this model (``PRUNE``), and every pruner sees the best value so far;
     ``pruner_settings`` overrides a pruner's (e.g. ``asha`` at {"min_resource": 30, "reduction_factor": 2}).
     ``concurrent``: trainings at once, given (a stored calibration) rather than measured. ``minutes``: stop
     asking for trials after this long (a fixed budget; those in flight finish). ``turns``: when one training at a time is
-    best, two processes take turns at the card (``solve_queue.gpu.device_turn``), so the next trial's set-up overlaps this
+    best, two processes take turns at the card (``runq.gpu.device_turn``), so the next trial's set-up overlaps this
     one's training. ``family``: ``b0`` (this space, ``train.train``, Page's recipe first) or a family of
     ``cifarq.families`` (``airbench.train``, its space under ``cap`` parameters and ``max_epochs``, its warm points;
     ``kd`` a teacher directory for distillation). ``warm_points``: the points to start from instead of the family's
@@ -203,9 +203,9 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
     import functools
     import optuna
     import shutil
-    from solve_queue.hpo import optuna_optimize, recover_running
-    from solve_queue.parallel import GPUProcessExecutor, calibrate
-    from solve_queue.hpo import make_pruner
+    from runq.hpo import optuna_optimize, recover_running
+    from runq.parallel import GPUProcessExecutor, calibrate
+    from runq.hpo import make_pruner
     t0 = time.time()
     given = None if warm_points is None else list(warm_points)
     if family == 'b0':
@@ -257,7 +257,7 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
     pool = k
     if turns and k == 1:
         import os
-        os.environ['SOLVEQ_DEVICE_TURNS'] = '1'             # (inherited by the pool's processes)
+        os.environ['RUNQ_DEVICE_TURNS'] = '1'             # (inherited by the pool's processes)
         pool = 2
     with GPUProcessExecutor(pool) as ex:
         optuna_optimize(study, fn, space_fn, n_trials=n_trials, executor=ex,

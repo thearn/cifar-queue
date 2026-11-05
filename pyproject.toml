@@ -18,11 +18,11 @@ sf = ["schedulefree"]                                # schedule-free optimisers 
 ray = ["ray[tune]>=2.50"]                            # mode 2 driven by Ray Tune (on_vm_ray), PBT
 app = ["gradio>=5", "pillow"]                        # app/app.py
 test = ["pytest", "optuna>=4", "pyarrow", "pillow"]
-queue = ["solve-queue[gcs]"]                         # pipeline/ on the queue (solve-queue: not public)
+queue = ["runq[gcs]"]                         # pipeline/ on the queue (runq: not public)
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]                               # (not results/publish/: a staged copy of the repository)
-markers = ["queue: runs a job through solve-queue's daemon (skipped unless it is set up)"]
+markers = ["queue: runs a job through runq's daemon (skipped unless it is set up)"]

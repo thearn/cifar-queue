@@ -1,5 +1,5 @@
 """The pipeline's stages as scripts, in this process (``--targets direct``), on a fresh copy of configs/ (the source
-synthetic) that is its own git repository: ingest to a staged model repo. The search needs solve-queue (skipped without
+synthetic) that is its own git repository: ingest to a staged model repo. The search needs runq (skipped without
 it); the queue test runs a training through the daemon when ``RUN_QUEUE_TESTS=1`` and Pueue is installed."""
 import json
 import os
@@ -63,8 +63,8 @@ def test_publish_refuses_a_champion_of_another_dataset(root):
 
 @pytest.mark.queue
 @pytest.mark.skipif(os.environ.get('RUN_QUEUE_TESTS') != '1' or not shutil.which('pueue'),
-                    reason='RUN_QUEUE_TESTS=1 and a running solve-queue daemon')
+                    reason='RUN_QUEUE_TESTS=1 and a running runq daemon')
 def test_training_through_the_queue(root):
-    pytest.importorskip('solve_queue')
+    pytest.importorskip('runq')
     out = run(root, '40_train.py', '--targets', 'local', '--set', 'epochs=1', *SETS)
     assert 'val_acc' in out

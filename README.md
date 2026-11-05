@@ -1,6 +1,6 @@
 # cifar-queue
 
-This repository is a test problem for solve-queue, my compute queue library (not public at the moment). solve-queue is a thin wrapper that takes local and cloud GPUs and CPUs from a mix of sources (here a local RTX 4060 and Colab VMs) and presents them as one compute pool, so that HPC and ML workflows can be submitted as ordinary function calls without caring where they run. It handles environment and code sync, sending only what changed to storage buckets in the same cloud region as the compute to avoid egress costs, and copying between regions only when a job needs it. It is close to a mix of existing queue managers, but handles my own particular needs.
+This repository is a test problem for runq, my compute queue library (not public at the moment). runq is a thin wrapper that takes local and cloud GPUs and CPUs from a mix of sources (here a local RTX 4060 and Colab VMs) and presents them as one compute pool, so that HPC and ML workflows can be submitted as ordinary function calls without caring where they run. It handles environment and code sync, sending only what changed to storage buckets in the same cloud region as the compute to avoid egress costs, and copying between regions only when a job needs it. It is close to a mix of existing queue managers, but handles my own particular needs.
 
 I plan to push and update my test models publicly. The code is on GitHub ([thearn/cifar-queue](https://github.com/thearn/cifar-queue)) and the trained model on the Hugging Face hub ([thearn/cifar10-resnet9](https://huggingface.co/thearn/cifar10-resnet9)), which holds a snapshot of this repository at each publish.
 
@@ -36,7 +36,7 @@ Note that the logit scaling matters more than it looks. At 4 epochs, scaling the
 
 ## Running on the queue
 
-The pipeline below needs solve-queue, so it documents how the results were produced rather than something you can run today. A few of its terms are used throughout. A **job** is one Python function call (here `cifarq.train.train` with its hyperparameters) that the queue runs on whichever machine it places it: the local GPU, or a Colab VM it starts and stops as needed (an **executor**; `configs/compute.toml` names them: two L4s, a G4 and an A100). Each job gets its own directory, and whatever the function writes there comes back when it finishes. The queue copies the submitting Python environment to a VM once and caches it, sends only changed source files with each job, and sends the dataset file once per VM, keyed by its hash.
+The pipeline below needs runq, so it documents how the results were produced rather than something you can run today. A few of its terms are used throughout. A **job** is one Python function call (here `cifarq.train.train` with its hyperparameters) that the queue runs on whichever machine it places it: the local GPU, or a Colab VM it starts and stops as needed (an **executor**; `configs/compute.toml` names them: two L4s, a G4 and an A100). Each job gets its own directory, and whatever the function writes there comes back when it finishes. The queue copies the submitting Python environment to a VM once and caches it, sends only changed source files with each job, and sends the dataset file once per VM, keyed by its hash.
 
 The layout is that of [ml-queue-template](../ml-queue-template) (`.copier-answers.yml`): one script per stage in `pipeline/`, where each stage runs set in `configs/compute.toml` (`--targets` overrides it for one run), and every run writes a record to `results/<stage>/<time>.json` with its commit and dataset hash.
 
@@ -52,7 +52,7 @@ The layout is that of [ml-queue-template](../ml-queue-template) (`.copier-answer
 
 ```bash
 uv venv ~/.venvs/cifarq --python 3.12      # a uv or conda Python: a VM cannot rebuild the system one
-uv pip install --python ~/.venvs/cifarq/bin/python -e '.[train,sf,test]' -e ../solve-queue[gcs]
+uv pip install --python ~/.venvs/cifarq/bin/python -e '.[train,sf,test]' -e ../../solve-queue[gcs]
 ~/.venvs/cifarq/bin/python pipeline/10_ingest.py && ~/.venvs/cifarq/bin/python pipeline/20_clean.py && ~/.venvs/cifarq/bin/python pipeline/30_dataset.py
 ~/.venvs/cifarq/bin/python pipeline/40_train.py --targets colab:cifar-l4a --set epochs=16          # mode 1
 ~/.venvs/cifarq/bin/python pipeline/55_tune_on_vm.py --target colab:cifar-g4 --trials 600 --minutes 45 --pruner rungs
@@ -65,7 +65,7 @@ uv pip install --python ~/.venvs/cifarq/bin/python -e '.[train,sf,test]' -e ../s
 ~/.venvs/cifarq/bin/python -m pytest       # CPU tests on a tiny synthetic CIFAR; RUN_QUEUE_TESTS=1 adds one job through the daemon
 ```
 
-One training at a time was best on the L4, the 4060, the A100 and the G4 (two at once gave 6 % less on the G4); mode 2 runs two processes taking turns at the card instead, so one trial's set-up overlaps the other's training. To follow a run, `solveq wait ID --grep trial` prints each trial as it ends (the solve-queue skill). Colab allows two GPU VMs per account, so run mode 3 after mode 2 has released its VM. Trials return only their numbers, so no weights are kept from the search; `60_champion.py` trains the best parameters again with `train(save='model')`. `70_publish.py` refuses uncommitted changes and a champion trained on another dataset than the manifest names, and its hub commit names the local commit. The Gradio app in `app/` is not hosted, since a Gradio Space now needs a paid Hugging Face plan or ZeroGPU.
+One training at a time was best on the L4, the 4060, the A100 and the G4 (two at once gave 6 % less on the G4); mode 2 runs two processes taking turns at the card instead, so one trial's set-up overlaps the other's training. To follow a run, `runq wait ID --grep trial` prints each trial as it ends (the runq skill). Colab allows two GPU VMs per account, so run mode 3 after mode 2 has released its VM. Trials return only their numbers, so no weights are kept from the search; `60_champion.py` trains the best parameters again with `train(save='model')`. `70_publish.py` refuses uncommitted changes and a champion trained on another dataset than the manifest names, and its hub commit names the local commit. The Gradio app in `app/` is not hosted, since a Gradio Space now needs a paid Hugging Face plan or ZeroGPU.
 
 To follow a search, `pipeline/tools/watch.py` (mode 3's study) or `--mode2` (the running mode 2 job's study, copied back every two minutes), or `uvx optuna-dashboard sqlite:///results/tune-study.db`. To resume a dead search, pass `--resume`: mode 3 reattaches the trials left in flight to their jobs, and mode 2 sends the last copied study to a new job. Completed trials are never re-run. All output goes to `results/` (not committed).
 
