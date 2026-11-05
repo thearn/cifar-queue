@@ -154,7 +154,18 @@ AB96_45K = {'widths': [128, 384, 512], 'depth': 3, 'scaling_factor': 1 / 9, 'bn_
 
 
 def front_space(trial, kd: str = '') -> dict:
-    return eqairbench_space(trial, max_epochs=100, kd=kd, lows=FRONT_LOWS)
+    """``eqairbench_space`` with the front's widths; a point over the parameter cap is refused here (raised as
+    ``optuna.TrialPruned``: told pruned by runq with no job, so the sampler still learns the boundary), as the trainer
+    would refuse it at step 0 after a job's round trip (phase B, 2026-11-05: 3 of 12 trials)."""
+    import optuna
+
+    from .airbench import DEFAULTS, build, param_counts
+    p = eqairbench_space(trial, max_epochs=100, kd=kd, lows=FRONT_LOWS)
+    stored = param_counts(build({**DEFAULTS, **p})[0])['stored']
+    trial.set_user_attr('params', stored)
+    if stored > p['param_cap']:
+        raise optuna.TrialPruned(f'{stored} parameters, over the cap of {p["param_cap"]}')
+    return p
 
 
 def macs_of(params: dict) -> int:
