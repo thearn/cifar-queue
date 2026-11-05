@@ -10,6 +10,10 @@ cifar-l4a = { gpu = "L4", idle_minutes = 5 }
 cifar-l4b = { gpu = "L4", idle_minutes = 5 }
 cifar-g4 = { gpu = "G4", idle_minutes = 1 }
 cifar-a100 = { gpu = "A100", idle_minutes = 1 }
+# the front study's rented cards (runq clouds): RunPod through SkyPilot (on-demand, the cards it has in stock, GCS
+# until the environment is seeded into R2) and a Compute Engine spot L4; each VM stops itself after 15 idle minutes
+front-rp = { provider = "sky", gpu = "RTX4090,RTXA5000,A40,L4", infra = "runpod", spot = false, store = "gcs", idle_minutes = 3, vm_idle_min = 15 }
+front-l4 = { provider = "gce", gpu = "L4", idle_minutes = 3, vm_idle_min = 15 }
 
 [stages.clean]                            # decoding the two parquet files: here
 targets = { direct = 1 }
@@ -47,3 +51,9 @@ targets = { "colab:cifar-g4" = 1 }
 gpu_mb = 20000
 host_mb = 16000
 minutes = 30
+
+[stages.front]                            # the accuracy/MACs front (pipeline/57_front.py): two-seed trials, 100 epochs
+targets = { "colab:cifar-g4" = 1, "colab:front-rp" = 1, "colab:front-l4" = 1 }
+gpu_mb = 20000
+host_mb = 12000
+minutes = 45

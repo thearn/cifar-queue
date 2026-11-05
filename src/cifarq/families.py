@@ -85,14 +85,15 @@ def pyramidnet_space(trial, cap: int = 2_000_000, max_epochs: float = 40, kd: st
     return {**p, **recipe(trial, max_epochs, kd), 'param_cap': cap}
 
 
-def eqairbench_space(trial, cap: int = 2_000_000, max_epochs: float = 100, kd: str = '') -> dict:
+def eqairbench_space(trial, cap: int = 2_000_000, max_epochs: float = 100, kd: str = '', lows=(96, 96, 112)) -> dict:
     """Session 2026-10-30-equivariant-small, M5: the flip-equivariant airbench (depth 3; the last 1 or 2 groups
     equivariant, M3's winner), structured receptive fields on or off (M4's one non-negative lever), widths under the
     cap, and the recipe around the finalist's at a fixed ``max_epochs`` (E*). Scored at one view (``tta_level`` 0;
     ``val_acc_by_views`` still reports 2 and 6). Distillation from ``kd`` (one airbench96) with its weight free."""
     c, s = trial.suggest_categorical, trial.suggest_float
     p = {'arch': 'airbench', 'depth': 3, 'flip_eq': c('flip_eq', [1, 2]), 'srf': c('srf', [False, True]),
-         'widths': (c('w1', list(range(96, 184, 8))), c('w2', list(range(96, 200, 8))), c('w3', list(range(112, 232, 8)))),
+         'widths': (c('w1', list(range(lows[0], 184, 8))), c('w2', list(range(lows[1], 200, 8))),
+                    c('w3', list(range(lows[2], 232, 8)))),
          'epochs': float(max_epochs), 'batch_size': c('batch_size', [512, 1024]), 'lr': s('lr', 4.0, 14.0, log=True),
          'momentum': s('momentum', 0.7, 0.9), 'weight_decay': s('weight_decay', 0.004, 0.015, log=True),
          'bias_scaler': s('bias_scaler', 24.0, 96.0, log=True), 'label_smoothing': s('label_smoothing', 0.1, 0.3),
@@ -134,3 +135,63 @@ CALIBRATE = {'airbench': {'epochs': 2, 'widths': (64, 256, 256)},
              'convmixer': {'epochs': 1, 'arch': 'convmixer', 'arch_kw': {'dim': 256, 'depth': 8, 'kernel': 5, 'patch': 2}},
              'pyramidnet': {'epochs': 1, 'arch': 'pyramidnet', 'arch_kw': {'depth': 110, 'alpha': 48}, 'batch_size': 256},
              'eqairbench': {'epochs': 2, 'widths': (128, 112, 144), 'depth': 3, 'flip_eq': 2}}
+
+
+# ---- the accuracy / compute front (2026-11-05): the two-objective study session 2026-10-30 planned (M7) and drew
+# from existing points instead. Objectives: two-seed one-view validation (up) and MACs a view (down), the
+# flip-equivariant airbench at 100 epochs, widths down to half the finalist's so the front's cheap end is searched.
+
+FRONT_LOWS = (48, 48, 64)
+TRAIN_FRONT = 'cifarq.families:train_front'
+TEACHER_DIR = 'models/ab96-45k-s0'                     # under results/: airbench96 on the 45k split, seed 0
+# the teacher's recipe: E1.1-45k (results/autoresearch/E1.1-45k), 95.87 % at 6 views; its saved network (job 00023)
+# was cleaned away with its job folder, so it is trained again from this record
+AB96_45K = {'widths': [128, 384, 512], 'depth': 3, 'scaling_factor': 1 / 9, 'bn_momentum': 0.1, 'whiten_kernel': 2,
+            'whiten_eps': 0.0005, 'epochs': 37.0, 'batch_size': 1024, 'lr': 9.0, 'momentum': 0.85, 'weight_decay': 0.012,
+            'bias_scaler': 64.0, 'label_smoothing': 0.2, 'whiten_bias_epochs': 3, 'warmup_frac': 0.1, 'final_lr_frac': 0.0,
+            'lookahead': True, 'flip': True, 'translate': 4, 'cutout': 12, 'tta_level': 2, 'arch': 'airbench', 'arch_kw': {},
+            'bn_scale': False, 'param_cap': 0, 'tie': 0, 'flip_eq': 0, 'pca_init': False, 'tails': 0, 'tail_epochs': 3}
+
+
+def front_space(trial, kd: str = '') -> dict:
+    return eqairbench_space(trial, max_epochs=100, kd=kd, lows=FRONT_LOWS)
+
+
+def macs_of(params: dict) -> int:
+    """MACs a view of the network ``params`` describes (built on the CPU, untrained: well under a second)."""
+    from .airbench import DEFAULTS, build
+    from .footprint import count_macs
+    net, _ = build({**DEFAULTS, **params})
+    return int(count_macs(net))
+
+
+def train_front(data: str | None = None, report=None, **hp) -> dict:
+    """A front trial: ``train_two_seeds`` plus its MACs a view (the second objective, exact, not trained for)."""
+    r = train_two_seeds(data, report=report, **hp)
+    return {**r, 'macs': macs_of(hp)}
+
+
+def front_seeds(results) -> list[dict]:
+    """Completed trials for the front study from the session's saved runs (its M5 study was cleaned away; these
+    survive with full parameters and per-seed scores): M6's confirmations (seeds 0-1, as ``train_two_seeds``) and,
+    where a configuration has none, its retraining (seeds 1-3). Each: {params in ``front_space``'s names, values
+    [one-view validation, MACs], source}."""
+    import json
+    from pathlib import Path
+    out, seen = [], set()
+    for sub in ('M6-confirm', 'M6-retrain'):
+        for f in sorted((Path(results) / 'autoresearch' / sub).glob('*.json')):
+            d = json.loads(f.read_text())
+            name, p = f.stem, d['params']
+            if name in seen or float(p.get('epochs', 0)) != 100.0:
+                continue
+            seen.add(name)
+            w1, w2, w3 = p['widths']
+            params = {'flip_eq': int(p.get('flip_eq', 2)), 'srf': bool(p.get('srf', False)), 'w1': w1, 'w2': w2, 'w3': w3,
+                      **{k: p[k] for k in ('batch_size', 'lr', 'momentum', 'weight_decay', 'bias_scaler', 'label_smoothing',
+                                           'warmup_frac', 'final_lr_frac', 'bn_momentum', 'translate', 'cutout',
+                                           'scaling_factor', 'kd_weight', 'kd_temp')}}
+            vals = [r['val_acc_notta'] for r in d['runs']]
+            out.append({'params': params, 'values': [sum(vals) / len(vals), macs_of(p)], 'source': f'{sub}/{name}',
+                        'seeds': [r['seed'] for r in d['runs']]})
+    return out

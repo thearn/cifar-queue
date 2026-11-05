@@ -60,11 +60,17 @@ def ensure_executors(targets: dict):
     for t, slots in targets.items():
         if not t.startswith('colab:'):
             continue
-        name, spec = t[6:], COMPUTE['executors'][t[6:]]
+        name = t[6:]
         rec = known.get(name)
         if rec is None:
+            spec = COMPUTE['executors'][name]
+            # any provider (runq clouds): colab (default), gce, or sky with its clouds (infra), spot and store
+            kind = spec.get('provider', 'colab')
+            options = ({'infra': spec.get('infra'), 'spot': spec.get('spot'), 'vm_idle_min': spec.get('vm_idle_min')}
+                       if kind == 'sky' else {'vm_idle_min': spec.get('vm_idle_min')} if kind == 'gce' else None)
             executors.add(name, gpu=spec['gpu'], idle_stop_minutes=spec.get('idle_minutes', 5), parallel=slots,
-                          shape=spec.get('shape'), log=lambda s: None)
+                          shape=spec.get('shape'), provider_kind=kind, options=options, store=spec.get('store'),
+                          log=lambda s: None)
         elif slots > 1 and rec.get('parallel') != slots:
             executors.update(name, parallel=slots)
 
