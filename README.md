@@ -52,7 +52,7 @@ The layout is that of [ml-queue-template](../ml-queue-template) (`.copier-answer
 
 ```bash
 uv venv ~/.venvs/cifarq --python 3.12      # a uv or conda Python: a VM cannot rebuild the system one
-uv pip install --python ~/.venvs/cifarq/bin/python -e '.[train,sf,test]' -e ../../solve-queue[gcs]
+uv pip install --python ~/.venvs/cifarq/bin/python -e '.[train,sf,test]' -e ../../runq[gcs]
 ~/.venvs/cifarq/bin/python pipeline/10_ingest.py && ~/.venvs/cifarq/bin/python pipeline/20_clean.py && ~/.venvs/cifarq/bin/python pipeline/30_dataset.py
 ~/.venvs/cifarq/bin/python pipeline/40_train.py --targets colab:cifar-l4a --set epochs=16          # mode 1
 ~/.venvs/cifarq/bin/python pipeline/55_tune_on_vm.py --target colab:cifar-g4 --trials 600 --minutes 45 --pruner rungs

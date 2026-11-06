@@ -7,7 +7,7 @@ and the share of the test half's top 10 % they cut (the conditional false-kill r
 import json, math, sys
 from pathlib import Path
 import numpy as np
-sys.path.insert(0, '/mnt/c/Users/trist/Documents/code/solve-queue/src')
+sys.path.insert(0, '/mnt/c/Users/trist/Documents/code/runq/src')
 from runq.search.hpo import simulate_rungs
 from surestop import KillRule
 
