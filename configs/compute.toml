@@ -13,10 +13,10 @@ cifar-a100 = { gpu = "A100", idle_minutes = 1 }
 # the front study's rented cards (runq clouds): RunPod through SkyPilot (on-demand, the cards it has in stock, R2:
 # layers missing there are copied in from GCS by the VM) and a Compute Engine spot L4; each VM stops itself after 15
 # idle minutes
-front-rp = { provider = "sky", gpu = "RTX4090,RTXA5000,A40,L4", infra = "runpod", spot = false, store = "r2", idle_minutes = 3, vm_idle_min = 15 }
-front-l4 = { provider = "gce", gpu = "L4", idle_minutes = 3, vm_idle_min = 15 }
-front-vast = { provider = "vast", gpu = "RTX4090,RTX3090,RTXA5000,RTXA4000", store = "r2", idle_minutes = 3, vm_idle_min = 15 }
-front-lam = { provider = "sky", gpu = "A10,RTX6000,A6000", infra = "lambda", spot = false, store = "r2", idle_minutes = 3, vm_idle_min = 15 }
+front-rp = { provider = "sky", gpu = "RTX4090,RTXA5000,A40,L4", infra = "runpod", spot = false, store = "r2", idle_minutes = 3, vm_idle_min = 10 }
+front-l4 = { provider = "gce", gpu = "L4", idle_minutes = 3, vm_idle_min = 10 }
+front-vast = { provider = "vast", gpu = "RTX4090,RTX3090,RTXA5000,RTXA4000", store = "r2", idle_minutes = 3, vm_idle_min = 10 }
+front-lam = { provider = "sky", gpu = "A10,RTX6000,A6000", infra = "lambda", spot = false, store = "r2", idle_minutes = 3, vm_idle_min = 10 }
 
 [stages.clean]                            # decoding the two parquet files: here
 targets = { direct = 1 }
