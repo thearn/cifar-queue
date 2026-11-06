@@ -55,19 +55,41 @@
 <circle cx="287.9" cy="215.9" r="4" fill="#9bb7d4" opacity="0.8"/>
 <circle cx="291.0" cy="199.5" r="4" fill="#9bb7d4" opacity="0.8"/>
 <circle cx="167.0" cy="347.2" r="4" fill="#9bb7d4" opacity="0.8"/>
-<polyline fill="none" stroke="#c0392b" stroke-width="2" points="162.3,294.7 188.9,204.4 291.0,199.5 320.8,169.9 426.9,132.2 570.4,131.7 613.0,92.8"/>
+<circle cx="282.2" cy="294.7" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="294.3" cy="232.3" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="195.7" cy="283.2" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="332.0" cy="171.6" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="346.9" cy="181.4" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="188.9" cy="302.9" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="540.9" cy="99.4" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="241.1" cy="188.0" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="428.1" cy="176.5" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="261.9" cy="266.8" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="404.9" cy="151.9" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="185.4" cy="289.7" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="585.2" cy="150.3" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="405.7" cy="212.6" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="460.7" cy="238.9" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="356.4" cy="232.3" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="328.5" cy="194.6" r="4" fill="#9bb7d4" opacity="0.8"/>
+<circle cx="528.2" cy="202.8" r="4" fill="#9bb7d4" opacity="0.8"/>
+<polyline fill="none" stroke="#c0392b" stroke-width="2" points="162.3,294.7 185.4,289.7 188.9,204.4 241.1,188.0 320.8,169.9 404.9,151.9 426.9,132.2 540.9,99.4 613.0,92.8"/>
 <circle cx="162.3" cy="294.7" r="5" fill="#c0392b"/>
 <text x="169.3" y="287.7" fill="#c0392b">66M 94.50%</text>
+<circle cx="185.4" cy="289.7" r="5" fill="#c0392b"/>
+<text x="192.4" y="282.7" fill="#c0392b">81M 94.53%</text>
 <circle cx="188.9" cy="204.4" r="5" fill="#c0392b"/>
 <text x="195.9" y="197.4" fill="#c0392b">83M 95.05%</text>
-<circle cx="291.0" cy="199.5" r="5" fill="#c0392b"/>
-<text x="298.0" y="192.5" fill="#c0392b">149M 95.08%</text>
+<circle cx="241.1" cy="188.0" r="5" fill="#c0392b"/>
+<text x="248.1" y="181.0" fill="#c0392b">117M 95.15%</text>
 <circle cx="320.8" cy="169.9" r="5" fill="#c0392b"/>
 <text x="327.8" y="162.9" fill="#c0392b">169M 95.26%</text>
+<circle cx="404.9" cy="151.9" r="5" fill="#c0392b"/>
+<text x="411.9" y="144.9" fill="#c0392b">223M 95.37%</text>
 <circle cx="426.9" cy="132.2" r="5" fill="#c0392b"/>
 <text x="433.9" y="125.2" fill="#c0392b">237M 95.49%</text>
-<circle cx="570.4" cy="131.7" r="5" fill="#c0392b"/>
-<text x="577.4" y="124.7" fill="#c0392b">330M 95.49%</text>
+<circle cx="540.9" cy="99.4" r="5" fill="#c0392b"/>
+<text x="547.9" y="92.4" fill="#c0392b">311M 95.69%</text>
 <circle cx="613.0" cy="92.8" r="5" fill="#c0392b"/>
 <text x="620.0" y="85.8" fill="#c0392b">358M 95.73%</text>
 <text x="660" y="52" text-anchor="end" fill="#555">blue: new trials; tan: the 2026-10-30 session's runs; red: the front</text></svg>

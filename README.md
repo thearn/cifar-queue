@@ -130,17 +130,21 @@ The published model on the hub is still the ResNet-9.
 The two-objective study the 2026-10-30 session planned (`pipeline/57_front.py`): two-seed one-view validation against
 MACs a view, the 1.94 M flip-equivariant airbench at 100 epochs with airbench96 distillation, widths down to half the
 finalist's. It started from that session's five saved runs as completed trials (its own study had been cleaned away),
-and ran 16 new trials: 4 on a Colab G4, then 12 across a Colab G4, a RunPod A40 and a Compute Engine spot L4 at once.
-Validation only; the test set was not opened.
+and ran 35 new trials: 4 on a Colab G4, 12 across a Colab G4, a RunPod A40 and a Compute Engine spot L4 at once, then
+17 more across RunPod (A40, A5000), Vast.ai (A4000) and Lambda (A10) VMs, and 2 on Lambda alone to prove that provider
+on the GPU (40 completed in all, 11 refused by the parameter cap before any job, 11 failed, most of those a Lambda VM
+training on the CPU). Validation only; the test set was not opened.
 
 | MACs a view | Validation, 1 view | Parameters | From |
 |---|---|---|---|
-| 66 M | 94.50 % | 0.49 M | the finalist at half its widths |
-| **83 M** | **95.05 %** | 1.13 M | a new trial |
-| 149 M | 95.08 % | 1.35 M | a new trial |
-| 169 M | 95.26 % | 1.65 M | a new trial |
+| 66 M | 94.50 % | 0.49 M | the finalist at half its widths (G4) |
+| 81 M | 94.53 % | 1.04 M | a new trial (A40) |
+| **83 M** | **95.05 %** | 1.13 M | a new trial (G4) |
+| 117 M | 95.15 % | 1.20 M | a new trial (Vast A4000) |
+| 169 M | 95.26 % | 1.65 M | a new trial (G4) |
+| 223 M | 95.37 % | 1.74 M | a new trial (Vast A4000) |
 | 237 M | 95.49 % | 1.94 M | the session's finalist (FIN) |
-| 330 M | 95.49 % | 1.81 M | a session search trial (T14; level with FIN within noise) |
+| 311 M | 95.69 % | 1.72 M | a new trial (A40) |
 | 358 M | 95.73 % | 1.99 M | the session's best search trial (T39) |
 
 At about a third of the finalist's compute (83 M MACs) the search found a network 0.44 points behind it, where
