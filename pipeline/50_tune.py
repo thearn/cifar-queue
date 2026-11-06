@@ -22,7 +22,7 @@ import optuna
 
 from common import RESULTS, ROOT, dataset_file, executor, record, stage_targets, targets_arg
 from cifarq import tune
-from runq.hpo import make_pruner, optuna_optimize
+from runq.search.hpo import make_pruner, optuna_optimize
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()

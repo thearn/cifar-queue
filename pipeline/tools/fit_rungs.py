@@ -14,7 +14,7 @@ import itertools
 import json
 
 import optuna
-from runq.hpo import rung_check, simulate_rungs
+from runq.search.hpo import rung_check, simulate_rungs
 
 GRID = list(range(5, 101, 5))
 CANDIDATES = [list(r) for n in (1, 2, 3) for r in itertools.combinations((10, 20, 30, 40, 50, 60, 70, 80), n)]

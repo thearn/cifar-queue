@@ -8,7 +8,7 @@ import json, math, sys
 from pathlib import Path
 import numpy as np
 sys.path.insert(0, '/mnt/c/Users/trist/Documents/code/solve-queue/src')
-from runq.hpo import simulate_rungs
+from runq.search.hpo import simulate_rungs
 from surestop import KillRule
 
 curves = []

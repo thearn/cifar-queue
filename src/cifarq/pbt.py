@@ -191,7 +191,7 @@ def probe(base: dict, data: str | None = None, seeds=(0, 1, 2), batches=(256, 51
     measured against), each batch size with the learning rate scaled by the square root of the batch ratio (Adam's
     usual rule), and the throughput of one training against two at once (``parallel.GPUProcessExecutor``)."""
     from .train import train
-    from runq.parallel import GPUProcessExecutor
+    from runq.search.parallel import GPUProcessExecutor
     out = {'seeds': [], 'batches': [], 'concurrency': []}
     for s in seeds:
         r = train(data=data, **{**base, 'seed': s})

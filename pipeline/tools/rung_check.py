@@ -10,7 +10,7 @@ import math
 import sys
 from pathlib import Path
 
-from runq.hpo import rung_check, simulate_rungs
+from runq.search.hpo import rung_check, simulate_rungs
 
 roots = [Path(a) for a in sys.argv[1:]] or [Path(__file__).resolve().parents[2] / 'results' / 'jobs' / d for d in ('distributed', 'tune')]
 curves = []

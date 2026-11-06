@@ -25,7 +25,7 @@ import optuna
 
 from common import RESULTS, dataset_file, executor, record, stage_targets, targets_arg
 from cifarq import families
-from runq.hpo import optuna_optimize
+from runq.search.hpo import optuna_optimize
 
 STUDY = 'eqairbench-front'
 

@@ -392,7 +392,7 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     elif callable(report):
         stop_here = report
     else:
-        from runq.hpo import reporter
+        from runq.search.hpo import reporter
         stop_here = reporter(report)
 
     if dev.type == 'cuda':

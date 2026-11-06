@@ -203,9 +203,9 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
     import functools
     import optuna
     import shutil
-    from runq.hpo import optuna_optimize, recover_running
-    from runq.parallel import GPUProcessExecutor, calibrate
-    from runq.hpo import make_pruner
+    from runq.search.hpo import optuna_optimize, recover_running
+    from runq.search.parallel import GPUProcessExecutor, calibrate
+    from runq.search.hpo import make_pruner
     t0 = time.time()
     given = None if warm_points is None else list(warm_points)
     if family == 'b0':

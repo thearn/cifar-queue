@@ -192,7 +192,7 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
         return evaluate.accuracy(ema.module if ema is not None else net, x, y, norm, h['tta_flip'])
 
     try:                                                     # (taking turns at the card with other trials: opt-in)
-        from runq.gpu import device_turn
+        from runq.core.gpu import device_turn
     except ImportError:
         device_turn = contextlib.nullcontext
     turn = device_turn(); turn.__enter__()
@@ -201,7 +201,7 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     elif callable(report):
         stop_here = report
     else:
-        from runq.hpo import reporter                 # a study's spec: only inside the queue's trials
+        from runq.search.hpo import reporter                 # a study's spec: only inside the queue's trials
         stop_here = reporter(report)
     pruned = False
     history, t0 = [], time.time()

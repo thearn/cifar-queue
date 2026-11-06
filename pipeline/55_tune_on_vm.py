@@ -57,7 +57,7 @@ if __name__ == '__main__':
         spec = COMPUTE['executors'][target[6:]]
         gpu, shape = spec['gpu'], spec.get('shape')
         if a.concurrent is None:
-            from runq import cards
+            from runq.cloud import cards
             stored = (cards.card(gpu, shape).get('slots') or {}).get(slot_key)
             if stored:
                 a.concurrent = stored
@@ -124,7 +124,7 @@ if __name__ == '__main__':
     result['wall_seconds_from_submit'] = round(time.time() - t0, 1)
     if gpu and not a.concurrent and result.get('calibration') and not result['calibration'][0].get('given'):
         # the card's measured trainings at once, kept for the next run (runq cards.json: --concurrent unneeded)
-        from runq import cards
+        from runq.cloud import cards
         cards.set_slots(gpu, shape, slot_key, int(result['concurrent']))
         print(f'recorded: {gpu} runs {result["concurrent"]} cifar trainings at once', flush=True)
     # (the study stays in the job's directory, which the record names: no shared copy for a later run to overwrite;

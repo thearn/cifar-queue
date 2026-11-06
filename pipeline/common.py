@@ -55,7 +55,7 @@ class Direct(Executor):
 def ensure_executors(targets: dict):
     """Register the executors ``targets`` names from configs/compute.toml's [executors] (any provider: colab, gce, or
     sky with its clouds, spot and store; ``runq clouds``), each with as many parallel slots as the stage gives it."""
-    from runq import executors
+    from runq.queue import executors
     executors.ensure(targets, COMPUTE['executors'], log=lambda s: None)
 
 
@@ -75,7 +75,7 @@ def executor(stage: str, targets: dict, data=(), send=(), **hints) -> Executor:
         if len(targets) > 1:
             raise SystemExit('direct runs in this process: it cannot share a stage with queue targets')
         return Direct(root)
-    from runq.futures import QueueExecutor
+    from runq.search.futures import QueueExecutor
     ensure_executors(targets)
     return QueueExecutor(root, targets=targets, path=[SRC, *send], data=[str(d) for d in data], **hints)
 
