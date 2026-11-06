@@ -45,3 +45,10 @@ ignore = [
   "SIM102",           # nested ifs kept where a comment sits between the conditions
   "SIM115",           # a file opened for a child process's output, held by the process, not a with-block
 ]
+
+# The structure check of the global git hooks (lib/git-hooks, quality/structure.py), run by the pre-push hook on a
+# push to main. Report mode: measures printed, nothing refused; switch to "gate" once the main features have settled.
+[tool.structure]
+package = "src/cifarq"
+mode = "report"
+exclude = ["airbench.py"]  # ported from K. Jordan's cifar10-airbench as it is
