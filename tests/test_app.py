@@ -1,12 +1,13 @@
 """The Gradio app classifies an image with a saved network (skipped without gradio)."""
+
 import importlib.util
 from pathlib import Path
 
 import pytest
+from conftest import SMALL
 from PIL import Image
 
 from cifarq import train
-from conftest import SMALL
 
 
 def test_app_classifies(built, tmp_path, monkeypatch):

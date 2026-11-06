@@ -1,5 +1,6 @@
 """The repository's directories and its TOML configs. ``ML_PROJECT_ROOT`` moves them all (the tests run the pipeline
 in a temporary copy); on a VM a job is given its files by path, so nothing there depends on these."""
+
 from __future__ import annotations
 
 import hashlib
@@ -47,5 +48,4 @@ def up_to_date(name: str, inputs: str, directory: Path) -> bool:
     """Whether stage ``name`` already ran on ``inputs`` (a ``digest`` of what it read and its settings) and its files
     are still in ``directory`` with the hashes it recorded."""
     m = read_manifest(name)
-    return bool(m and m.get('inputs') == inputs and all(
-        (directory / f).exists() and sha256(directory / f) == h for f, h in m['files'].items()))
+    return bool(m and m.get('inputs') == inputs and all((directory / f).exists() and sha256(directory / f) == h for f, h in m['files'].items()))

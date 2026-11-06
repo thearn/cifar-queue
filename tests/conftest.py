@@ -1,6 +1,7 @@
 """The tests run on a copy of configs/ in a temporary directory (``ML_PROJECT_ROOT``, set before the package is
 imported), its source switched to ``synthetic`` (tiny CIFAR-shaped parquet files made there: no network, no GPU), so
 they never touch the repository's data/ or results/. ``built`` runs the data stages there once."""
+
 import os
 import shutil
 import tempfile
@@ -25,13 +26,14 @@ def copy_configs(root: Path):
 TMP = Path(tempfile.mkdtemp(prefix='cifarq-test-'))
 copy_configs(TMP)
 os.environ['ML_PROJECT_ROOT'] = str(TMP)
-os.environ.setdefault('CUDA_VISIBLE_DEVICES', '')        # the tests are CPU tests, also on a machine with a GPU
+os.environ.setdefault('CUDA_VISIBLE_DEVICES', '')  # the tests are CPU tests, also on a machine with a GPU
 
 
 @pytest.fixture(scope='session')
 def built():
     """The data stages run once on the synthetic source: the dataset's arrays."""
     from cifarq.data import clean, dataset, ingest
+
     ingest.fetch()
     clean.run()
     dataset.build()

@@ -5,6 +5,7 @@ stall (2), and with 0 after ``--idle-min`` minutes with no active job (the queue
 
     python pipeline/tools/watch_session.py fparch [--stall-min 15] [--idle-min 20]
 """
+
 from __future__ import annotations
 
 import argparse

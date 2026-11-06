@@ -1,11 +1,12 @@
 """``train`` keeps the job contract on a CPU: its result's keys, early stopping through ``report``, unknown
 hyperparameters refused, and a saved network that loads back and predicts what training measured."""
+
 import numpy as np
 import pytest
+from conftest import SMALL
 
 from cifarq import evaluate, train
 from cifarq.hub import ResNet9
-from conftest import SMALL
 
 
 def test_result_contract(built):
@@ -34,4 +35,4 @@ def test_saved_network_predicts_what_training_measured(built, tmp_path, monkeypa
     probs = net.predict(built['x_test'])
     assert probs.shape == (200, 10) and np.allclose(probs.sum(1), 1, atol=1e-5)
     acc = (probs.argmax(1) == built['y_test']).mean()
-    assert abs(acc - r['test_acc']) <= 3 / len(probs)          # (training measured under bf16 autocast, predict in fp32)
+    assert abs(acc - r['test_acc']) <= 3 / len(probs)  # (training measured under bf16 autocast, predict in fp32)

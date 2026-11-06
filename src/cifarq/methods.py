@@ -1,10 +1,10 @@
 """The method track of the autoresearch session (docs/autoresearch/2026-10-29-footprint-arch/PLAN.md, section 5,
 "Methods"): pieces ``airbench`` switches on by hyperparameter, each off by default.
 
-- MT1 ``FlipConv`` and ``PairMaxPool``: horizontal-flip equivariance by weight sharing. Features come in pairs (a, b),
+- MT1 ``FlipConv`` and ``GroupMaxPool``: horizontal-flip equivariance by weight sharing. Features come in pairs (a, b),
   b the response to the mirrored image; a layer's weight is [[w1, w2], [T w2, T w1]] (T mirrors a kernel), so
   mirroring the input mirrors and swaps the output pair, and its free weights are half a plain convolution's of the
-  same width. The lifting layer takes plain channels to pairs ([w; T w]). ``PairMaxPool`` pools globally, then over
+  same width. The lifting layer takes plain channels to pairs ([w; T w]). ``GroupMaxPool(2)`` pools globally, then over
   each pair: invariant to mirroring up to the boundary effects of odd-sized maps.
 - MT3 ``pca_init``: each 3x3 convolution after the whitening layer, in forward order, starts as the principal
   directions of its own input patches (as airbench's first layer does for pixels), instead of a partial identity.
@@ -19,6 +19,7 @@ Session 2026-10-30-equivariant-small adds ``P4MConv`` and ``GroupMaxPool`` (Q1: 
 ``MaxBlurPool`` (Q2: anti-aliased downsampling), ``FieldSE`` (O2), structured receptive fields (``use_srf``, Q4) and
 the Muon optimizer for the filters (``MuonSGD``, O4).
 """
+
 from __future__ import annotations
 
 import torch
@@ -36,28 +37,20 @@ class FlipConv(nn.Module):
         # (w1 and w2 stacked along the output dimension: a 4-d tensor, as the memory formats expect)
         self.weight = nn.Parameter(torch.zeros((cout if lift else 2 * cout), cin, 3, 3))
         with torch.no_grad():
-            nn.init.kaiming_uniform_(self.weight, a=5 ** 0.5)
-            nn.init.dirac_(self.weight[:min(cout, cin)])
+            nn.init.kaiming_uniform_(self.weight, a=5**0.5)
+            nn.init.dirac_(self.weight[: min(cout, cin)])
             if not lift:
-                self.weight[cout:].mul_(0.1)                 # (the cross term small at the start)
+                self.weight[cout:].mul_(0.1)  # (the cross term small at the start)
 
     def full(self):
         t = lambda w: w.flip(-1)
         if self.lift:
             return torch.cat([self.weight, t(self.weight)], 0)
-        w1, w2 = self.weight[:self.cout], self.weight[self.cout:]
+        w1, w2 = self.weight[: self.cout], self.weight[self.cout :]
         return torch.cat([torch.cat([w1, w2], 1), torch.cat([t(w2), t(w1)], 1)], 0)
 
     def forward(self, x):
         return F.conv2d(x, self.full().to(x.dtype), padding=1)
-
-
-class PairMaxPool(nn.Module):
-    """(N, 2C, H, W) -> (N, C): the global maximum of each channel, then the maximum over each pair."""
-
-    def forward(self, x):
-        n, c2 = x.shape[:2]
-        return x.amax((2, 3)).view(n, 2, c2 // 2).amax(1)
 
 
 FlipConv.order = 2
@@ -72,7 +65,7 @@ def d4_transform(x, g: int):
 def _d4_tables():
     """(composition table mul[a][b] = a∘b, inverses), read from the action on a generic 3x3 array, so the convention is
     whatever ``d4_transform`` does."""
-    x = torch.arange(9.).view(3, 3)
+    x = torch.arange(9.0).view(3, 3)
     images = [d4_transform(x, g) for g in range(8)]
     find = lambda y: next(c for c in range(8) if torch.equal(images[c], y))
     mul = [[find(d4_transform(d4_transform(x, b), a)) for b in range(8)] for a in range(8)]
@@ -96,20 +89,19 @@ class P4MConv(nn.Module):
         self.register_buffer('perm', torch.tensor([[mul[inv[g]][k] for k in range(8)] for g in range(8)]), persistent=False)
         self.weight = nn.Parameter(torch.zeros(cout, cin * (1 if lift else 8), 3, 3))
         with torch.no_grad():
-            nn.init.kaiming_uniform_(self.weight, a=5 ** 0.5)
+            nn.init.kaiming_uniform_(self.weight, a=5**0.5)
             if lift:
-                nn.init.dirac_(self.weight[:min(cout, cin)])
+                nn.init.dirac_(self.weight[: min(cout, cin)])
             else:
                 w5 = self.weight.view(cout, 8, cin, 3, 3)
-                w5[:, 1:].mul_(0.1)                          # (the cross-element terms small at the start)
-                nn.init.dirac_(w5[:min(cout, cin), 0])       # (identity element: a partial identity per block)
+                w5[:, 1:].mul_(0.1)  # (the cross-element terms small at the start)
+                nn.init.dirac_(w5[: min(cout, cin), 0])  # (identity element: a partial identity per block)
 
     def full(self):
         if self.lift:
             return torch.cat([d4_transform(self.weight, g) for g in range(8)], 0)
         w5 = self.weight.view(self.cout, 8, self.cin, 3, 3)
-        return torch.cat([d4_transform(w5[:, self.perm[g]].reshape(self.cout, 8 * self.cin, 3, 3), g)
-                          for g in range(8)], 0)
+        return torch.cat([d4_transform(w5[:, self.perm[g]].reshape(self.cout, 8 * self.cin, 3, 3), g) for g in range(8)], 0)
 
     def forward(self, x):
         return F.conv2d(x, self.full().to(x.dtype), padding=1)
@@ -117,7 +109,7 @@ class P4MConv(nn.Module):
 
 class GroupMaxPool(nn.Module):
     """(N, kC, H, W) -> (N, C): the global maximum of each channel, then the maximum over each field of ``k``
-    (``k=2``: ``PairMaxPool``)."""
+    (``k=2``: the pairs of ``FlipConv``)."""
 
     def __init__(self, k: int = 2):
         super().__init__()
@@ -135,14 +127,13 @@ class MaxBlurPool(nn.Module):
 
     def __init__(self):
         super().__init__()
-        f = torch.tensor([1., 3., 3., 1.])
+        f = torch.tensor([1.0, 3.0, 3.0, 1.0])
         self.register_buffer('filt', (f[:, None] * f[None, :] / 64).view(1, 1, 4, 4), persistent=False)
 
     def forward(self, x):
         x = F.max_pool2d(x, 3, 1, 1)
         c = x.shape[1]
-        return F.conv2d(F.pad(x, (1, 1, 1, 1), mode='reflect'), self.filt.to(x.dtype).expand(c, 1, 4, 4), stride=2,
-                        groups=c)
+        return F.conv2d(F.pad(x, (1, 1, 1, 1), mode='reflect'), self.filt.to(x.dtype).expand(c, 1, 4, 4), stride=2, groups=c)
 
 
 class FieldSE(nn.Module):
@@ -155,7 +146,8 @@ class FieldSE(nn.Module):
         self.k = k
         hidden = max(4, c // reduction)
         self.fc1, self.fc2 = nn.Linear(c, hidden), nn.Linear(hidden, c)
-        nn.init.zeros_(self.fc2.weight); nn.init.constant_(self.fc2.bias, 3.0)    # (starts near the identity)
+        nn.init.zeros_(self.fc2.weight)
+        nn.init.constant_(self.fc2.bias, 3.0)  # (starts near the identity)
 
     def forward(self, x):
         n, kc = x.shape[:2]
@@ -169,12 +161,12 @@ def gaussian_basis_3x3(sigma: float = 1.0) -> torch.Tensor:
     """(6, 3, 3): the Gaussian and its derivatives to second order (1, x, y, xx, xy, yy) sampled on the 3x3 grid,
     orthonormalised (structured receptive fields, Jacobsen et al. 2016). Closed under flips and quarter turns up to
     sign and mixing, so it composes with the equivariant layers."""
-    r = torch.tensor([-1., 0., 1.])
+    r = torch.tensor([-1.0, 0.0, 1.0])
     y, x = torch.meshgrid(r, r, indexing='ij')
-    g = torch.exp(-(x ** 2 + y ** 2) / (2 * sigma ** 2))
-    fs = [g, x * g, y * g, (x ** 2 / sigma ** 2 - 1) * g, x * y * g, (y ** 2 / sigma ** 2 - 1) * g]
+    g = torch.exp(-(x**2 + y**2) / (2 * sigma**2))
+    fs = [g, x * g, y * g, (x**2 / sigma**2 - 1) * g, x * y * g, (y**2 / sigma**2 - 1) * g]
     b = torch.stack([f.flatten() for f in fs])
-    q, _ = torch.linalg.qr(b.T)                              # (9, 6): orthonormal columns spanning the basis
+    q, _ = torch.linalg.qr(b.T)  # (9, 6): orthonormal columns spanning the basis
     return q.T.reshape(6, 3, 3)
 
 
@@ -197,6 +189,7 @@ def use_srf(net) -> int:
     """Every trainable 3x3 kernel of ``net`` (plain, flip or p4m convolutions; not the frozen whitening layer) stored
     as structured-receptive-field coefficients. The number of kernels changed."""
     from torch.nn.utils import parametrize
+
     n = 0
     for m in net.modules():
         w = getattr(m, 'weight', None)
@@ -244,7 +237,7 @@ class MuonSGD(torch.optim.Optimizer):
                 buf.mul_(mu).add_(d)
                 d = d + mu * buf
                 if g['muon']:
-                    flat = d.reshape(d.size(0), -1)              # (filters are channels_last: reshape, not view)
+                    flat = d.reshape(d.size(0), -1)  # (filters are channels_last: reshape, not view)
                     d = newton_schulz(flat).reshape(d.shape) * max(1.0, flat.size(0) / flat.size(1)) ** 0.5
                 p.add_(d.to(p.dtype), alpha=-g['lr'])
 
@@ -265,7 +258,7 @@ def pca_init(net, x, patches: int = 50_000):
     net.train()
     for conv in _convs_in_order(net):
         grabbed = {}
-        handle = conv.register_forward_hook(lambda m, inp, out: grabbed.__setitem__('x', inp[0]))
+        handle = conv.register_forward_hook(lambda m, inp, out, grabbed=grabbed: grabbed.__setitem__('x', inp[0]))
         net(x)
         handle.remove()
         inp = grabbed['x'].float()
@@ -274,7 +267,7 @@ def pca_init(net, x, patches: int = 50_000):
         cols = cols[torch.randperm(len(cols), device=cols.device)[:patches]]
         cols = cols - cols.mean(0)
         vals, vecs = torch.linalg.eigh((cols.T @ cols / len(cols)).double())
-        top = vecs.flip(1).T.float()                         # (cin*9, cin*9), largest first
+        top = vecs.flip(1).T.float()  # (cin*9, cin*9), largest first
         k = min(conv.out_channels, top.shape[0])
         conv.weight[:k] = top[:k].reshape(k, cin, 3, 3).to(conv.weight.dtype)
     net.load_state_dict({**net.state_dict(), **saved})

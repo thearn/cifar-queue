@@ -12,6 +12,7 @@ local). For a pruned search on a Colab card, run the whole search inside one job
     python pipeline/50_tune.py --storage results/distributed-study.db --resume --no-schedule-free
     python pipeline/50_tune.py --trials 20 --targets local --prune rungs --cold --seed 1
 """
+
 import argparse
 import collections
 import json
@@ -19,10 +20,10 @@ import time
 from pathlib import Path
 
 import optuna
-
 from common import RESULTS, ROOT, dataset_file, executor, record, stage_targets, targets_arg
-from cifarq import tune
 from runq.search.hpo import make_pruner, optuna_optimize
+
+from cifarq import tune
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
@@ -35,8 +36,11 @@ if __name__ == '__main__':
     ap.add_argument('--seed', type=int, default=0, help="the sampler's seed (repeat cold runs with several)")
     ap.add_argument('--startup', type=int, default=16, help='random trials before TPE models')
     ap.add_argument('--cold', action='store_true', help="start without Page's recipe (for comparing methods and cards)")
-    ap.add_argument('--no-schedule-free', action='store_true', help='the space before schedule-free training (studies made '
-                    'before it, such as distributed-study.db)')
+    ap.add_argument(
+        '--no-schedule-free',
+        action='store_true',
+        help='the space before schedule-free training (studies made before it, such as distributed-study.db)',
+    )
     a = ap.parse_args()
     targets = stage_targets('tune', a.targets)
     if a.prune and set(targets) - {'direct', 'local'}:
@@ -49,26 +53,55 @@ if __name__ == '__main__':
         study = optuna.load_study(study_name=name, storage=storage, sampler=tune.sampler(a.seed, a.startup), pruner=pruner)
         print(f'resuming {name}: {len(study.trials)} trials so far', flush=True)
     else:
-        study = optuna.create_study(direction=tune.DIRECTION, storage=storage, sampler=tune.sampler(a.seed, a.startup),
-                                    pruner=pruner, study_name=f'tune-{time.strftime("%Y%m%d-%H%M%S")}')
+        study = optuna.create_study(
+            direction=tune.DIRECTION,
+            storage=storage,
+            sampler=tune.sampler(a.seed, a.startup),
+            pruner=pruner,
+            study_name=f'tune-{time.strftime("%Y%m%d-%H%M%S")}',
+        )
         if not a.cold:
             study.enqueue_trial(tune.REFERENCE)
     print(f'trials in flight: {targets}', flush=True)
     space = (lambda t: tune.space(t, schedule_free=False)) if a.no_schedule_free else tune.space
     t0 = time.time()
     with executor('tune', targets, data=[dataset_file()]) as ex:
-        optuna_optimize(study, tune.TRAIN, space, n_trials=a.trials, executor=ex, objective=tune.OBJECTIVE,
-                        fixed={'data': str(dataset_file())}, job_options=tune.job_options, resume=True,
-                        report_to=storage if a.prune else None, smooth=bool(a.prune), minutes=a.minutes)
+        optuna_optimize(
+            study,
+            tune.TRAIN,
+            space,
+            n_trials=a.trials,
+            executor=ex,
+            objective=tune.OBJECTIVE,
+            fixed={'data': str(dataset_file())},
+            job_options=tune.job_options,
+            resume=True,
+            report_to=storage if a.prune else None,
+            smooth=bool(a.prune),
+            minutes=a.minutes,
+        )
     done = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
     best = study.best_trial
-    out = {'study': study.study_name, 'storage': storage, 'trials': len(study.trials), 'completed': len(done),
-           'pruned': sum(t.state == optuna.trial.TrialState.PRUNED for t in study.trials),
-           'best': {'trial': best.number, 'value': best.value, 'params': best.params,
-                    'test_acc': best.user_attrs.get('test_acc'), 'train_seconds': best.user_attrs.get('train_seconds'),
-                    'device': best.user_attrs.get('device')},
-           'by_device': dict(collections.Counter(t.user_attrs.get('device', '?') for t in done)),
-           'minutes_to': tune._minutes_to(study, (0.92, 0.93)), 'start': 'cold' if a.cold else 'Page', 'seed': a.seed,
-           'targets': targets, 'search_seconds': round(time.time() - t0, 1)}
+    out = {
+        'study': study.study_name,
+        'storage': storage,
+        'trials': len(study.trials),
+        'completed': len(done),
+        'pruned': sum(t.state == optuna.trial.TrialState.PRUNED for t in study.trials),
+        'best': {
+            'trial': best.number,
+            'value': best.value,
+            'params': best.params,
+            'test_acc': best.user_attrs.get('test_acc'),
+            'train_seconds': best.user_attrs.get('train_seconds'),
+            'device': best.user_attrs.get('device'),
+        },
+        'by_device': dict(collections.Counter(t.user_attrs.get('device', '?') for t in done)),
+        'minutes_to': tune._minutes_to(study, (0.92, 0.93)),
+        'start': 'cold' if a.cold else 'Page',
+        'seed': a.seed,
+        'targets': targets,
+        'search_seconds': round(time.time() - t0, 1),
+    }
     print(json.dumps({k: out[k] for k in ('best', 'by_device', 'minutes_to')}, indent=1))
     print('saved', record('tune', out))

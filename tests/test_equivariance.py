@@ -1,6 +1,7 @@
 """Session 2026-10-30-equivariant-small, Q1/Q2: the D4 layers are equivariant (transforming the input by g transforms
 each output block spatially by g and permutes the blocks as g^-1 k), the blur pool commutes with the 8 transforms on
 even maps, field pooling is invariant, and the expanded kernel is what the MAC counter counts."""
+
 import torch
 
 from cifarq import airbench, footprint, methods
@@ -42,7 +43,7 @@ def test_flipconv_matches_the_same_rule_for_its_two_elements():
     flip = lambda t: t.flip(-1)
     y = lift(x)
     n, c2, h, w = y.shape
-    swap = lambda t: torch.cat([flip(t[:, c2 // 2:]), flip(t[:, :c2 // 2])], 1)
+    swap = lambda t: torch.cat([flip(t[:, c2 // 2 :]), flip(t[:, : c2 // 2])], 1)
     assert torch.allclose(lift(flip(x)), swap(y), atol=1e-5)
     assert torch.allclose(conv(swap(y)), swap(conv(y)), atol=1e-5)
 
@@ -65,8 +66,7 @@ def test_d4_network_builds_counts_and_trains(built):
     expanded = methods.P4MConv(8, 8).full()
     assert expanded.shape == (64, 64, 3, 3)
     assert footprint.count_macs(methods.P4MConv(8, 8), (1, 64, 4, 4)) == 16 * 64 * 64 * 9
-    r = airbench.train(widths=(16, 8, 8), depth=3, flip_eq=2, eq_group='d4', blur_pool=True, batch_size=64, epochs=1,
-                       test='sealed')
+    r = airbench.train(widths=(16, 8, 8), depth=3, flip_eq=2, eq_group='d4', blur_pool=True, batch_size=64, epochs=1, test='sealed')
     assert 0 <= r['val_acc'] <= 1 and r['params'] == airbench.param_counts(net)['stored']
 
 
@@ -74,7 +74,7 @@ def test_field_se_keeps_equivariance_and_srf_reduces_stored_weights():
     torch.manual_seed(0)
     se = methods.FieldSE(4, k=8, reduction=2)
     nn_init = torch.nn.init
-    nn_init.normal_(se.fc2.weight)                           # (away from the identity start)
+    nn_init.normal_(se.fc2.weight)  # (away from the identity start)
     f = torch.randn(2, 32, 6, 6)
     for g in range(8):
         assert torch.allclose(se(transform_field(f, g)), blocks_after(se(f), g), atol=1e-5)
@@ -82,7 +82,7 @@ def test_field_se_keeps_equivariance_and_srf_reduces_stored_weights():
     methods.use_srf(conv)
     assert conv.parametrizations.weight.original.shape == (5, 32, 6)
     x = torch.randn(1, 32, 8, 8)
-    for g in range(8):                                       # (the basis is closed under D4: still equivariant)
+    for g in range(8):  # (the basis is closed under D4: still equivariant)
         assert torch.allclose(conv(transform_field(x, g)), blocks_after(conv(x), g), atol=1e-4)
 
 
@@ -99,13 +99,14 @@ def test_muon_trains_and_orthogonalises(built):
     g = torch.randn(16, 72)
     o = methods.newton_schulz(g).float()
     sv = torch.linalg.svdvals(o)
-    assert sv.max() < 1.5 and sv.min() > 0.3                # (Muon's iteration: singular values near 1, not exactly)
+    assert sv.max() < 1.5 and sv.min() > 0.3  # (Muon's iteration: singular values near 1, not exactly)
     r = airbench.train(widths=(16, 16, 16), depth=3, flip_eq=2, batch_size=64, epochs=1, test='sealed', optimizer='muon')
     assert 0.1 < r['val_acc'] <= 1
 
 
 def test_levers_run_in_fp16_on_the_gpu(built):
     import pytest
+
     if not torch.cuda.is_available():
         pytest.skip('needs a GPU (the fp16 path)')
     for kw in ({'se': 4}, {'srf': True}, {'optimizer': 'muon'}, {'eq_group': 'd4'}, {'blur_pool': True}):

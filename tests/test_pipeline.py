@@ -1,6 +1,7 @@
 """The pipeline's stages as scripts, in this process (``--targets direct``), on a fresh copy of configs/ (the source
 synthetic) that is its own git repository: ingest to a staged model repo. The search needs runq (skipped without
 it); the queue test runs a training through the daemon when ``RUN_QUEUE_TESTS=1`` and Pueue is installed."""
+
 import json
 import os
 import shutil
@@ -9,7 +10,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from conftest import SMALL, copy_configs
 
 REPO = Path(__file__).resolve().parents[1]
@@ -55,15 +55,15 @@ def test_publish_refuses_a_champion_of_another_dataset(root):
     other = f.with_name('other.json')
     other.write_text(json.dumps(doc))
     env = {**os.environ, 'ML_PROJECT_ROOT': str(root)}
-    r = subprocess.run([sys.executable, str(REPO / 'pipeline' / '70_publish.py'), '--dry-run', '--champion', str(other)],
-                       env=env, capture_output=True, text=True)
+    r = subprocess.run(
+        [sys.executable, str(REPO / 'pipeline' / '70_publish.py'), '--dry-run', '--champion', str(other)], env=env, capture_output=True, text=True
+    )
     other.unlink()
     assert r.returncode != 0 and 'train it again' in r.stderr
 
 
 @pytest.mark.queue
-@pytest.mark.skipif(os.environ.get('RUN_QUEUE_TESTS') != '1' or not shutil.which('pueue'),
-                    reason='RUN_QUEUE_TESTS=1 and a running runq daemon')
+@pytest.mark.skipif(os.environ.get('RUN_QUEUE_TESTS') != '1' or not shutil.which('pueue'), reason='RUN_QUEUE_TESTS=1 and a running runq daemon')
 def test_training_through_the_queue(root):
     pytest.importorskip('runq')
     out = run(root, '40_train.py', '--targets', 'local', '--set', 'epochs=1', *SETS)

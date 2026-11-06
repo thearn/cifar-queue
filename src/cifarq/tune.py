@@ -20,6 +20,7 @@ The objective is the validation accuracy (5000 held-out training images); the te
 The sampler is multivariate TPE over the conditional groups, with a constant liar so trials in flight are not proposed
 twice.
 """
+
 from __future__ import annotations
 
 import json
@@ -36,20 +37,53 @@ OBJECTIVE, DIRECTION = evaluate.KEY, evaluate.DIRECTION
 # first trial: 64 channels, batch 512, SGD with Nesterov momentum 0.9, peak learning rate 0.4 (linear up over 5 of 24
 # epochs from 0, then linearly down to 0), weight decay 5e-4, label smoothing 0.2, logits x 0.125, random crops from
 # 4-pixel reflect padding, flips, 8x8 cutout on every image; no whitening, EMA or test-time flips (his later versions)
-PAGE = {'schedule_free': False, 'epochs': 24, 'width': 64, 'activation': 'relu', 'batch_size': 512, 'use_dropout': False,
-        'use_label_smoothing': True, 'label_smoothing': 0.2, 'head': 'linear', 'use_logit_scale': True, 'logit_scale': 0.125, 'whiten': False,
-        'tta_flip': False, 'optimizer': 'sgd', 'sgd_lr': 0.4, 'momentum': 0.9, 'nesterov': True, 'sgd_weight_decay': 5e-4,
-        'clip': False, 'ema': False, 'warmup_frac': 5 / 24, 'warmup_start_frac': 0.005, 'decay': 'linear',
-        'final_lr_frac': 0.001, 'use_translate': True, 'aug_translate': 4.0, 'use_rotate': False, 'use_scale': False,
-        'aug_flip': 0.5, 'use_brightness': False, 'use_contrast': False, 'use_saturation': False, 'use_cutout': True,
-        'cutout_size': 8, 'cutout_prob': 1.0, 'mix': 'none'}
-REFERENCE = PAGE                                          # (the template's name: every new search's first trial)
+PAGE = {
+    'schedule_free': False,
+    'epochs': 24,
+    'width': 64,
+    'activation': 'relu',
+    'batch_size': 512,
+    'use_dropout': False,
+    'use_label_smoothing': True,
+    'label_smoothing': 0.2,
+    'head': 'linear',
+    'use_logit_scale': True,
+    'logit_scale': 0.125,
+    'whiten': False,
+    'tta_flip': False,
+    'optimizer': 'sgd',
+    'sgd_lr': 0.4,
+    'momentum': 0.9,
+    'nesterov': True,
+    'sgd_weight_decay': 5e-4,
+    'clip': False,
+    'ema': False,
+    'warmup_frac': 5 / 24,
+    'warmup_start_frac': 0.005,
+    'decay': 'linear',
+    'final_lr_frac': 0.001,
+    'use_translate': True,
+    'aug_translate': 4.0,
+    'use_rotate': False,
+    'use_scale': False,
+    'aug_flip': 0.5,
+    'use_brightness': False,
+    'use_contrast': False,
+    'use_saturation': False,
+    'use_cutout': True,
+    'cutout_size': 8,
+    'cutout_prob': 1.0,
+    'mix': 'none',
+}
+REFERENCE = PAGE  # (the template's name: every new search's first trial)
 
 
 def sampler(seed: int = 0, startup: int = 16):
     import warnings
+
     import optuna
-    with warnings.catch_warnings():                       # (multivariate, group and constant_liar are marked experimental)
+
+    with warnings.catch_warnings():  # (multivariate, group and constant_liar are marked experimental)
         warnings.simplefilter('ignore', optuna.exceptions.ExperimentalWarning)
         # (``startup``: random trials before TPE models; a 30-minute L4 search fits ~30 trials, so 16 is half of it)
         return optuna.samplers.TPESampler(seed=seed, multivariate=True, group=True, constant_liar=True, n_startup_trials=startup)
@@ -58,8 +92,12 @@ def sampler(seed: int = 0, startup: int = 16):
 def space(trial, schedule_free: bool = True) -> dict:
     s = trial.suggest_float
     c = trial.suggest_categorical
-    p = {'epochs': trial.suggest_int('epochs', 6, 30, step=2), 'width': c('width', [16, 24, 32, 48, 64]),
-         'activation': c('activation', ['relu', 'gelu', 'silu', 'celu']), 'batch_size': c('batch_size', [256, 512, 1024])}
+    p = {
+        'epochs': trial.suggest_int('epochs', 6, 30, step=2),
+        'width': c('width', [16, 24, 32, 48, 64]),
+        'activation': c('activation', ['relu', 'gelu', 'silu', 'celu']),
+        'batch_size': c('batch_size', [256, 512, 1024]),
+    }
     if p['activation'] == 'celu':
         p['celu_alpha'] = s('celu_alpha', 0.05, 1.0, log=True)
     # the classifier head and the scale on its logits, each head its own range (a cosine's logits lie in [-1, 1], a
@@ -80,27 +118,53 @@ def space(trial, schedule_free: bool = True) -> dict:
     # schedule-free (``train``: no decay phase; its accuracy part-way through predicts its final far better, 87 % at 30 %
     # of training against 76 % for Page's schedule, 2026-10-29): a choice of its own, with its own ranges, so studies
     # made before it still resume (a categorical's choices cannot change within a study)
-    sf = c('schedule_free', [False, True]) if schedule_free else False      # (False: the space before it, for comparisons)
+    sf = c('schedule_free', [False, True]) if schedule_free else False  # (False: the space before it, for comparisons)
     if p['optimizer'] == 'sgd' and sf:
-        p.update(optimizer='sgd_sf', lr=s('sf_sgd_lr', 0.05, 5.0, log=True), momentum=s('sf_momentum', 0.7, 0.98),
-                 weight_decay=s('sgd_weight_decay', 1e-6, 5e-3, log=True))
+        p.update(
+            optimizer='sgd_sf',
+            lr=s('sf_sgd_lr', 0.05, 5.0, log=True),
+            momentum=s('sf_momentum', 0.7, 0.98),
+            weight_decay=s('sgd_weight_decay', 1e-6, 5e-3, log=True),
+        )
     elif p['optimizer'] == 'sgd':
-        p.update(lr=s('sgd_lr', 0.005, 0.8, log=True), momentum=s('momentum', 0.0, 0.97), nesterov=c('nesterov', [True, False]),
-                 weight_decay=s('sgd_weight_decay', 1e-6, 5e-3, log=True))
+        p.update(
+            lr=s('sgd_lr', 0.005, 0.8, log=True),
+            momentum=s('momentum', 0.0, 0.97),
+            nesterov=c('nesterov', [True, False]),
+            weight_decay=s('sgd_weight_decay', 1e-6, 5e-3, log=True),
+        )
     elif sf:
-        p.update(optimizer='adamw_sf', lr=s('sf_adamw_lr', 1e-4, 2e-2, log=True), beta1=s('beta1', 0.7, 0.97),
-                 beta2=c('beta2', [0.98, 0.99, 0.999]), weight_decay=s('adamw_weight_decay', 1e-4, 0.5, log=True))
+        p.update(
+            optimizer='adamw_sf',
+            lr=s('sf_adamw_lr', 1e-4, 2e-2, log=True),
+            beta1=s('beta1', 0.7, 0.97),
+            beta2=c('beta2', [0.98, 0.99, 0.999]),
+            weight_decay=s('adamw_weight_decay', 1e-4, 0.5, log=True),
+        )
     else:
-        p.update(lr=s('adamw_lr', 5e-5, 1e-2, log=True), beta1=s('beta1', 0.7, 0.97), beta2=c('beta2', [0.98, 0.99, 0.999]),
-                 weight_decay=s('adamw_weight_decay', 1e-4, 0.5, log=True))
+        p.update(
+            lr=s('adamw_lr', 5e-5, 1e-2, log=True),
+            beta1=s('beta1', 0.7, 0.97),
+            beta2=c('beta2', [0.98, 0.99, 0.999]),
+            weight_decay=s('adamw_weight_decay', 1e-4, 0.5, log=True),
+        )
     p['grad_clip'] = s('grad_clip', 0.25, 50.0, log=True) if c('clip', [False, True]) else 0.0
     # (the EMA's horizon, 1 / (1 - decay) steps, from 5 to 2000: short is nearly no averaging)
     p['ema_decay'] = 1 - 1 / s('ema_horizon', 5.0, 2000.0, log=True) if c('ema', [False, True]) else 0.0
-    p.update(warmup_frac=s('warmup_frac', 0.0, 0.5), warmup_start_frac=s('warmup_start_frac', 0.005, 1.0, log=True),
-             decay=c('decay', ['cosine', 'linear', 'exponential', 'none']))
+    p.update(
+        warmup_frac=s('warmup_frac', 0.0, 0.5),
+        warmup_start_frac=s('warmup_start_frac', 0.005, 1.0, log=True),
+        decay=c('decay', ['cosine', 'linear', 'exponential', 'none']),
+    )
     p['final_lr_frac'] = 1.0 if p['decay'] == 'none' else s('final_lr_frac', 1e-3, 0.3, log=True)
-    for name, low, high in (('translate', 0.1, 6.0), ('rotate', 0.2, 25.0), ('scale', 0.002, 0.3),
-                            ('brightness', 0.005, 0.5), ('contrast', 0.005, 0.5), ('saturation', 0.005, 0.6)):
+    for name, low, high in (
+        ('translate', 0.1, 6.0),
+        ('rotate', 0.2, 25.0),
+        ('scale', 0.002, 0.3),
+        ('brightness', 0.005, 0.5),
+        ('contrast', 0.005, 0.5),
+        ('saturation', 0.005, 0.6),
+    ):
         p[f'aug_{name}'] = s(f'aug_{name}', low, high, log=True) if c(f'use_{name}', [False, True]) else 0.0
     p['aug_flip'] = s('aug_flip', 0.0, 0.5)
     if c('use_cutout', [False, True]):
@@ -117,6 +181,7 @@ def train_params(params: dict) -> dict:
     """A point of the space as the search records it (a trial's ``params``, or ``PAGE``) as ``train``'s arguments. A
     trial of a study made before schedule-free training was in the space has no ``schedule_free``: the space without it."""
     import optuna
+
     return space(optuna.trial.FixedTrial(params), schedule_free='schedule_free' in params)
 
 
@@ -130,8 +195,7 @@ def job_options(params: dict) -> dict:
     persistent worker on a VM."""
     w, e = params.get('width', 32), params.get('epochs', 10)
     # (two trials on a VM take turns at its card: the next one's set-up overlaps this one's training)
-    return {'minutes': round(1 + e * (w / 32) ** 2 * 0.06, 1), 'gpu_mb': 1500 + 40 * w, 'worker': WORKER,
-            'vm_env': {'RUNQ_DEVICE_TURNS': '1'}}
+    return {'minutes': round(1 + e * (w / 32) ** 2 * 0.06, 1), 'gpu_mb': 1500 + 40 * w, 'worker': WORKER, 'vm_env': {'RUNQ_DEVICE_TURNS': '1'}}
 
 
 # early stopping chosen from this model's own curves (pipeline/tools/rung_check.py on 161 complete trials, 2026-10-29):
@@ -145,12 +209,14 @@ def _checkpoint(db: Path, out: Path):
     """A consistent copy of the study (SQLite's backup, not a file copy mid-write) as ``study-ckpt.db``: the job's
     checkpoint, sent to the bucket as it changes and restored by the queue before a lost VM's rerun."""
     import sqlite3
+
     tmp = out.with_suffix('.part')
     src, dst = sqlite3.connect(db), sqlite3.connect(tmp)
     try:
         src.backup(dst)
     finally:
-        src.close(); dst.close()
+        src.close()
+        dst.close()
     tmp.replace(out)
 
 
@@ -161,8 +227,7 @@ def _minutes_to(study, levels) -> dict:
     if not done or not starts:
         return {str(l): None for l in levels}
     t0 = min(starts)
-    return {str(l): next((round((t.datetime_complete - t0).total_seconds() / 60, 1) for t in done if t.value >= l), None)
-            for l in levels}
+    return {str(l): next((round((t.datetime_complete - t0).total_seconds() / 60, 1) for t in done if t.value >= l), None) for l in levels}
 
 
 def _best_by_time(study) -> list:
@@ -179,11 +244,28 @@ def _best_by_time(study) -> list:
     return out
 
 
-def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2, 3, 4, 6), seed: int = 0,
-          data: str | None = None, resume_from: str | None = None, pruner: str = 'none', concurrent: int | None = None,
-          minutes: float | None = None, turns: bool = True, pruner_settings: dict | None = None,
-          schedule_free: bool = True, warm: bool = True, startup: int = 16, family: str = 'b0', cap: int = 2_000_000,
-          max_epochs: float = 40, kd: str = '', warm_points: list | None = None, seeds: int = 1) -> dict:
+def on_vm(
+    n_trials: int = 80,
+    study_name: str = 'cifar-on-vm',
+    candidates=(1, 2, 3, 4, 6),
+    seed: int = 0,
+    data: str | None = None,
+    resume_from: str | None = None,
+    pruner: str = 'none',
+    concurrent: int | None = None,
+    minutes: float | None = None,
+    turns: bool = True,
+    pruner_settings: dict | None = None,
+    schedule_free: bool = True,
+    warm: bool = True,
+    startup: int = 16,
+    family: str = 'b0',
+    cap: int = 2_000_000,
+    max_epochs: float = 40,
+    kd: str = '',
+    warm_points: list | None = None,
+    seeds: int = 1,
+) -> dict:
     """Mode 2, run as one queue job on a VM: how many trainings the GPU runs at once with gain (``calibrate``, on
     2-epoch width-32 runs), then Optuna over the whole ``space`` with that many trials in flight as processes on the GPU, the study in
     ``study.db`` in the job's directory (brought back with the job). ``resume_from``: a study database of a run that
@@ -201,11 +283,12 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
     (an earlier study's best). ``seeds`` 2: each trial is ``families.train_two_seeds`` (seed 0 pruned by the study,
     survivors again at seed 1, the mean as the value; test sealed). The best trial, the calibration and the timing."""
     import functools
-    import optuna
     import shutil
-    from runq.search.hpo import optuna_optimize, recover_running
+
+    import optuna
+    from runq.search.hpo import make_pruner, optuna_optimize, recover_running
     from runq.search.parallel import GPUProcessExecutor, calibrate
-    from runq.search.hpo import make_pruner
+
     t0 = time.time()
     given = None if warm_points is None else list(warm_points)
     if family == 'b0':
@@ -213,6 +296,7 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
         cal = {'epochs': 2, 'width': 32}
     else:
         from . import families
+
         fn, warm_points, cal = (families.TRAIN_TWO_SEEDS if seeds == 2 else families.TRAIN), families.WARM[family], families.CALIBRATE[family]
         space_fn = functools.partial(families.SPACES[family], cap=cap, max_epochs=max_epochs, kd=kd)
     warm_points = warm_points if given is None else given
@@ -230,26 +314,39 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
         if Path(resume_from).resolve() != (Path.cwd() / 'study.db').resolve():
             shutil.copy(resume_from, Path.cwd() / 'study.db')
         study_name = optuna.study.get_all_study_names(storage)[-1]
-    study = optuna.create_study(direction='maximize', storage=storage, study_name=study_name, load_if_exists=True,
-                                sampler=sampler(seed, startup),
-                                pruner=make_pruner(pruner, **(pruner_settings or (PRUNE if pruner == 'rungs' else {}))))
+    study = optuna.create_study(
+        direction='maximize',
+        storage=storage,
+        study_name=study_name,
+        load_if_exists=True,
+        sampler=sampler(seed, startup),
+        pruner=make_pruner(pruner, **(pruner_settings or (PRUNE if pruner == 'rungs' else {}))),
+    )
     if resume_from:
-        recover_running(study)                               # (trials ran as processes here: those in flight run again)
+        recover_running(study)  # (trials ran as processes here: those in flight run again)
     if not study.trials and warm:
         # Page's recipe first: the search starts from the reference (a production search); cold (``warm=False``) for
         # comparing methods and cards, whose differences a known optimum found in the first minutes would hide
         for point in warm_points:
             study.enqueue_trial(point)
+
     def progress(line: str):
         """Each trial told: its line in the log, and progress.json (replaced whole) for whoever watches the job."""
         print(line, flush=True)
         done = [t for t in study.trials if t.state.name == 'COMPLETE']
         best = max(done, key=lambda t: t.value) if done else None
-        doc = {'when': time.time(), 'trials': len(study.trials), 'complete': len(done), 'n_trials': n_trials, 'concurrent': k,
-               'pruned': sum(1 for t in study.trials if t.state.name == 'PRUNED'),
-               'best_value': best.value if best else None, 'best_trial': best.number if best else None,
-               'best_params': best.params if best else None,
-               'best_test_acc': best.user_attrs.get('test_acc') if best else None}
+        doc = {
+            'when': time.time(),
+            'trials': len(study.trials),
+            'complete': len(done),
+            'n_trials': n_trials,
+            'concurrent': k,
+            'pruned': sum(1 for t in study.trials if t.state.name == 'PRUNED'),
+            'best_value': best.value if best else None,
+            'best_trial': best.number if best else None,
+            'best_params': best.params if best else None,
+            'best_test_acc': best.user_attrs.get('test_acc') if best else None,
+        }
         Path('progress.json.part').write_text(json.dumps(doc, indent=1) + '\n')
         Path('progress.json.part').replace('progress.json')
         _checkpoint(Path.cwd() / 'study.db', ckpt)
@@ -257,31 +354,57 @@ def on_vm(n_trials: int = 80, study_name: str = 'cifar-on-vm', candidates=(1, 2,
     pool = k
     if turns and k == 1:
         import os
-        os.environ['RUNQ_DEVICE_TURNS'] = '1'             # (inherited by the pool's processes)
+
+        os.environ['RUNQ_DEVICE_TURNS'] = '1'  # (inherited by the pool's processes)
         pool = 2
     with GPUProcessExecutor(pool) as ex:
-        optuna_optimize(study, fn, space_fn, n_trials=n_trials, executor=ex,
-                        concurrency=pool, fixed={'data': data},
-                        report_to=storage if pruner != 'none' else None, minutes=minutes, smooth=pruner != 'none',
-                        log=progress)
+        optuna_optimize(
+            study,
+            fn,
+            space_fn,
+            n_trials=n_trials,
+            executor=ex,
+            concurrency=pool,
+            fixed={'data': data},
+            report_to=storage if pruner != 'none' else None,
+            minutes=minutes,
+            smooth=pruner != 'none',
+            log=progress,
+        )
     best = study.best_trial
     states = [t.state.name for t in study.trials]
     others = [t.value for t in study.trials if t.state.name == 'COMPLETE' and (t.number >= len(warm_points) or not warm)]
-    out = {'best_value': best.value, 'best_params': best.params, 'best_test_acc': best.user_attrs.get('test_acc'),
-           'best_train_seconds': best.user_attrs.get('train_seconds'), 'pruner': pruner, 'start': 'Page' if warm else 'cold',
-           'startup': startup,
-           # minutes from the search's start to its first trial at 92 % and at 93 % (a cold start's measure: less luck
-           # than the best value alone)
-           'minutes_to': _minutes_to(study, (0.92, 0.93) if family == 'b0' else (0.94, 0.95, 0.955, 0.96)),
-           'family': family, 'cap': cap if family != 'b0' else None, 'max_epochs': max_epochs if family != 'b0' else None,
-           # the search's own finds, apart from the starting point it was given
-           'best_other_than_start': max(others) if others else None, 'others_at_92': sum(v >= 0.92 for v in others),
-           'completed': states.count('COMPLETE'), 'pruned': states.count('PRUNED'), 'failed': states.count('FAIL'),
-           # the best value as the search went (seconds since its start, value): the yield against time and units
-           'best_by_time': _best_by_time(study),
-           'trials': len(study.trials), 'concurrent': k, 'pool': pool, 'turns': pool != k,
-           'calibration': table, 'calibration_seconds': round(t_cal, 1),
-           'search_seconds': round(time.time() - t0 - t_cal, 1), 'device': best.user_attrs.get('device')}
+    out = {
+        'best_value': best.value,
+        'best_params': best.params,
+        'best_test_acc': best.user_attrs.get('test_acc'),
+        'best_train_seconds': best.user_attrs.get('train_seconds'),
+        'pruner': pruner,
+        'start': 'Page' if warm else 'cold',
+        'startup': startup,
+        # minutes from the search's start to its first trial at 92 % and at 93 % (a cold start's measure: less luck
+        # than the best value alone)
+        'minutes_to': _minutes_to(study, (0.92, 0.93) if family == 'b0' else (0.94, 0.95, 0.955, 0.96)),
+        'family': family,
+        'cap': cap if family != 'b0' else None,
+        'max_epochs': max_epochs if family != 'b0' else None,
+        # the search's own finds, apart from the starting point it was given
+        'best_other_than_start': max(others) if others else None,
+        'others_at_92': sum(v >= 0.92 for v in others),
+        'completed': states.count('COMPLETE'),
+        'pruned': states.count('PRUNED'),
+        'failed': states.count('FAIL'),
+        # the best value as the search went (seconds since its start, value): the yield against time and units
+        'best_by_time': _best_by_time(study),
+        'trials': len(study.trials),
+        'concurrent': k,
+        'pool': pool,
+        'turns': pool != k,
+        'calibration': table,
+        'calibration_seconds': round(t_cal, 1),
+        'search_seconds': round(time.time() - t0 - t_cal, 1),
+        'device': best.user_attrs.get('device'),
+    }
     Path('summary.json').write_text(json.dumps(out, indent=1) + '\n')
     return out
 
@@ -297,17 +420,25 @@ def _ray_progress_class():
         def __init__(self, n_trials, concurrent):
             self.n, self.k, self.t0 = n_trials, concurrent, time.time()
             self.done, self.stopped, self.failed, self.best = 0, 0, 0, None
-            self.finished = []                              # (seconds from the search's start, value) of each completed trial
+            self.finished = []  # (seconds from the search's start, value) of each completed trial
 
         def minutes_to(self, levels):
             return {str(l): next((round(s / 60, 1) for s, v in self.finished if v >= l), None) for l in levels}
 
         def _write(self):
-            doc = {'when': time.time(), 'driver': 'ray', 'trials': self.done + self.stopped + self.failed,
-                   'complete': self.done, 'pruned': self.stopped, 'failed': self.failed, 'n_trials': self.n,
-                   'concurrent': self.k, 'best_value': self.best[0] if self.best else None,
-                   'best_trial': self.best[1] if self.best else None,
-                   'best_test_acc': self.best[2] if self.best else None}
+            doc = {
+                'when': time.time(),
+                'driver': 'ray',
+                'trials': self.done + self.stopped + self.failed,
+                'complete': self.done,
+                'pruned': self.stopped,
+                'failed': self.failed,
+                'n_trials': self.n,
+                'concurrent': self.k,
+                'best_value': self.best[0] if self.best else None,
+                'best_trial': self.best[1] if self.best else None,
+                'best_test_acc': self.best[2] if self.best else None,
+            }
             Path('progress.json.part').write_text(json.dumps(doc, indent=1) + '\n')
             Path('progress.json.part').replace('progress.json')
 
@@ -328,6 +459,7 @@ def _ray_progress_class():
             self.failed += 1
             print(f'trial {trial.trial_id}: failed', flush=True)
             self._write()
+
     return RayProgress
 
 
@@ -340,7 +472,9 @@ def _ray_trainable(config: dict):
     of training done (Ray's scheduler stops it there when it should), and its final result."""
     import optuna
     from ray import tune as rtune
+
     from .train import train
+
     config = dict(config)
     data = config.pop('data', None)
     # Ray's OptunaSearch passes the sampled values by their Optuna names (sgd_lr, use_cutout, ...): ``space`` run on a
@@ -350,16 +484,26 @@ def _ray_trainable(config: dict):
     best = [float('-inf')]
 
     def report(step, value):
-        best[0] = max(best[0], float(value))                  # the best so far (high-rate epochs jump around)
+        best[0] = max(best[0], float(value))  # the best so far (high-rate epochs jump around)
         rtune.report({'val_acc': best[0], 'progress': int(step)})
-        return False                                       # (Ray stops a trial itself)
+        return False  # (Ray stops a trial itself)
+
     out = train(data=data, report=report, **config)
-    rtune.report({'val_acc': out['val_acc'], 'progress': 100, 'test_acc': out.get('test_acc'),
-                  'train_seconds': out['train_seconds'], 'device': out['device']})
+    rtune.report(
+        {'val_acc': out['val_acc'], 'progress': 100, 'test_acc': out.get('test_acc'), 'train_seconds': out['train_seconds'], 'device': out['device']}
+    )
 
 
-def on_vm_ray(n_trials: int = 80, scheduler: str = 'asha', concurrent: int = 1, minutes: float | None = None,
-              seed: int = 0, data: str | None = None, warm: bool = True, startup: int = 16) -> dict:
+def on_vm_ray(
+    n_trials: int = 80,
+    scheduler: str = 'asha',
+    concurrent: int = 1,
+    minutes: float | None = None,
+    seed: int = 0,
+    data: str | None = None,
+    warm: bool = True,
+    startup: int = 16,
+) -> dict:
     """Mode 2 driven by Ray Tune on the VM: the same space and Optuna's TPE sampler (Ray's ``OptunaSearch``, define-by-run
     over ``space``), Ray's own early stopping (``asha``: ``ASHAScheduler``; ``hyperband``: ``HyperBandScheduler``;
     ``none``: FIFO) on the percent of training done, ``concurrent`` trials at once sharing the GPU (each a 1/concurrent
@@ -368,35 +512,58 @@ def on_vm_ray(n_trials: int = 80, scheduler: str = 'asha', concurrent: int = 1, 
     from ray import tune as rtune
     from ray.tune.schedulers import ASHAScheduler, FIFOScheduler, HyperBandScheduler
     from ray.tune.search.optuna import OptunaSearch
+
     t0 = time.time()
     ray.init(include_dashboard=False, log_to_driver=False, ignore_reinit_error=True)
     # (Ray's rungs are geometric: grace 30 and factor 2 give 30 and 60 %, keeping half: the nearest to PRUNE that
     # simulate_rungs found safe, 57 % of the compute, 12 of 17 top trials kept)
-    sched = {'asha': lambda: ASHAScheduler(time_attr='progress', max_t=100, grace_period=30, reduction_factor=2),
-             'hyperband': lambda: HyperBandScheduler(time_attr='progress', max_t=100, reduction_factor=3),
-             'none': lambda: FIFOScheduler()}[scheduler]()
+    sched = {
+        'asha': lambda: ASHAScheduler(time_attr='progress', max_t=100, grace_period=30, reduction_factor=2),
+        'hyperband': lambda: HyperBandScheduler(time_attr='progress', max_t=100, reduction_factor=3),
+        'none': lambda: FIFOScheduler(),
+    }[scheduler]()
     # Page's recipe first, as the Optuna driver enqueues it (the Ray run of 2026-10-29 had no starting point)
-    search = OptunaSearch(space=space, sampler=sampler(seed, startup), metric='val_acc', mode='max',   # (module-level: Ray pickles it)
-                          points_to_evaluate=[dict(PAGE)] if warm else None)
+    search = OptunaSearch(
+        space=space,
+        sampler=sampler(seed, startup),
+        metric='val_acc',
+        mode='max',  # (module-level: Ray pickles it)
+        points_to_evaluate=[dict(PAGE)] if warm else None,
+    )
     progress = _RayProgress(n_trials, concurrent)
     tuner = rtune.Tuner(
         rtune.with_resources(_ray_trainable, {'cpu': 1, 'gpu': 1 / concurrent}),
         param_space={'data': data},
-        tune_config=rtune.TuneConfig(metric='val_acc', mode='max', search_alg=search, scheduler=sched,
-                                     num_samples=n_trials, max_concurrent_trials=concurrent,
-                                     time_budget_s=60 * minutes if minutes else None),
-        run_config=rtune.RunConfig(storage_path=str(Path.cwd() / 'ray'), name='mode2', verbose=0, callbacks=[progress]))
+        tune_config=rtune.TuneConfig(
+            metric='val_acc',
+            mode='max',
+            search_alg=search,
+            scheduler=sched,
+            num_samples=n_trials,
+            max_concurrent_trials=concurrent,
+            time_budget_s=60 * minutes if minutes else None,
+        ),
+        run_config=rtune.RunConfig(storage_path=str(Path.cwd() / 'ray'), name='mode2', verbose=0, callbacks=[progress]),
+    )
     results = tuner.fit()
     rows = [r for r in results if r.metrics]
     finished = [r for r in rows if r.metrics.get('progress') == 100]
     best = max(finished, key=lambda r: r.metrics['val_acc']) if finished else None
-    out = {'driver': 'ray', 'scheduler': scheduler, 'start': 'Page' if warm else 'cold', 'startup': startup,
-           'minutes_to': progress.minutes_to((0.92, 0.93)), 'trials': len(rows), 'completed': len(finished),
-           'pruned': len(rows) - len(finished), 'concurrent': concurrent,
-           'best_value': best.metrics['val_acc'] if best else None,
-           'best_test_acc': best.metrics.get('test_acc') if best else None,
-           'best_params': {k: v for k, v in (best.config or {}).items() if k != 'data'} if best else None,
-           'search_seconds': round(time.time() - t0, 1)}
+    out = {
+        'driver': 'ray',
+        'scheduler': scheduler,
+        'start': 'Page' if warm else 'cold',
+        'startup': startup,
+        'minutes_to': progress.minutes_to((0.92, 0.93)),
+        'trials': len(rows),
+        'completed': len(finished),
+        'pruned': len(rows) - len(finished),
+        'concurrent': concurrent,
+        'best_value': best.metrics['val_acc'] if best else None,
+        'best_test_acc': best.metrics.get('test_acc') if best else None,
+        'best_params': {k: v for k, v in (best.config or {}).items() if k != 'data'} if best else None,
+        'search_seconds': round(time.time() - t0, 1),
+    }
     Path('summary.json').write_text(json.dumps(out, indent=1, default=str) + '\n')
     ray.shutdown()
     return out

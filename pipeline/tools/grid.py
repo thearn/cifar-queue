@@ -7,6 +7,7 @@ source tree kept as refs/autoresearch/<experiment>.
     python pipeline/tools/grid.py M3-h1-curves --base results/autoresearch/eqsm/finalist-d1d1.json \
         --grid results/autoresearch/eqsm/m3-grid.json --seeds 1 2 3 --targets colab:cifar-g4
 """
+
 from __future__ import annotations
 
 import argparse
@@ -53,8 +54,9 @@ def main():
     out = RESULTS / 'autoresearch' / a.experiment
     out.mkdir(parents=True, exist_ok=True)
     snap, prov = snapshot(a.experiment), provenance()
-    teachers = sorted({str(Path(t.strip()).resolve()) for g in grid for t in
-                       str({**base, **g['params']}.get('kd_teacher') or '').split(',') if t.strip()})
+    teachers = sorted(
+        {str(Path(t.strip()).resolve()) for g in grid for t in str({**base, **g['params']}.get('kd_teacher') or '').split(',') if t.strip()}
+    )
     hints = {'minutes': 30, 'stall_min': 10, **({'gpu_mb': a.gpu_mb} if a.gpu_mb else {})}
     t0 = time.time()
     with executor(a.stage, stage_targets(a.stage, a.targets), data=[dataset_file(), *teachers], **hints) as ex:
@@ -72,16 +74,24 @@ def main():
                 params, f = futures[(g['name'], s)]
                 try:
                     r = {k: v for k, v in f.result().items() if k != 'hyperparameters'}
-                except Exception as error:                   # noqa: BLE001 - one failed run is recorded, not fatal
+                except Exception as error:  # noqa: BLE001 - one failed run is recorded, not fatal
                     r = {'failed': repr(error)}
-                    print(f"{g['name']} seed {s}: FAILED {error!r}", flush=True)
+                    print(f'{g["name"]} seed {s}: FAILED {error!r}', flush=True)
                 runs.append({**r, 'seed': s, 'job': str(f.job)})
-                print(f"{g['name']} seed {s}: val {r.get('val_acc')} views {r.get('val_acc_by_views')} "
-                      f"{r.get('train_seconds')} s", flush=True)
-            doc = {'experiment': a.experiment, 'name': g['name'], 'fn': a.fn, 'params': params, 'seeds': a.seeds,
-                   'snapshot': snap, 'provenance': prov, 'summary': summarise(runs), 'runs': runs}
-            (out / f"{g['name']}.json").write_text(json.dumps(doc, indent=1, default=str) + '\n')
-            print(f"{g['name']}: {json.dumps(doc['summary'].get('val_acc_by_views'))}", flush=True)
+                print(f'{g["name"]} seed {s}: val {r.get("val_acc")} views {r.get("val_acc_by_views")} {r.get("train_seconds")} s', flush=True)
+            doc = {
+                'experiment': a.experiment,
+                'name': g['name'],
+                'fn': a.fn,
+                'params': params,
+                'seeds': a.seeds,
+                'snapshot': snap,
+                'provenance': prov,
+                'summary': summarise(runs),
+                'runs': runs,
+            }
+            (out / f'{g["name"]}.json').write_text(json.dumps(doc, indent=1, default=str) + '\n')
+            print(f'{g["name"]}: {json.dumps(doc["summary"].get("val_acc_by_views"))}', flush=True)
     print(f'done in {time.time() - t0:.0f} s; results in {out}')
 
 

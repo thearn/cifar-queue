@@ -1,5 +1,6 @@
 """The footprint evaluator: its counts match the networks', a fresh-process measurement returns the table's keys,
 and the classes reject a larger model and a model that stores its training images (the negative controls)."""
+
 import json
 
 import numpy as np
@@ -28,8 +29,8 @@ def test_classes_reject_larger_and_leaky_models():
     ref = {'params_stored': 1000, 'bytes': 4100, 'runs': {'cpu1_b1': {'rss_mb': 100.0}}}
     row = lambda p, b, rss: {'params_stored': p, 'bytes': b, 'runs': {'cpu1_b1': {'rss_mb': rss}}}
     assert footprint.classify(row(900, 3700, 100.0), ref) == 'S'
-    assert footprint.classify(row(900, 3700, 150.0), ref) == 'P'           # more memory: parameter-matched only
-    assert footprint.classify(row(2000, 8100, 90.0), ref) == 'out'         # more parameters
+    assert footprint.classify(row(900, 3700, 150.0), ref) == 'P'  # more memory: parameter-matched only
+    assert footprint.classify(row(2000, 8100, 90.0), ref) == 'out'  # more parameters
     # a kernel method keeping its 45000 training images: few parameters, 138 MB stored
     assert footprint.classify(row(500, 45000 * 3072 + 4100, 90.0), ref) == 'out'
     assert footprint.classify(row(1500, 6100, 90.0), ref, param_cap=2000) == 'S'
@@ -45,7 +46,9 @@ def test_predictions_are_probabilities_for_unseen_images(built, tmp_path):
 
 def test_macs_count_equivariant_layers_as_the_convolution_they_run():
     import torch
+
     from cifarq import methods
+
     for lift in (True, False):
         layer = methods.FlipConv(8, 8, lift=lift)
         plain = torch.nn.Conv2d(*layer.full().shape[1::-1], 3, padding=1, bias=False)

@@ -1,6 +1,7 @@
 """The search space against the training function (no GPU): every sampled point is a valid set of hyperparameters,
 every optional feature can be sampled off, the queue options grow with the trial's size, a trial of a study made before
 schedule-free training still maps to train's arguments, and a short search runs end to end in this process."""
+
 import optuna
 
 from cifarq import train, tune
@@ -14,9 +15,23 @@ def test_the_space_samples_valid_hyperparameters_with_every_feature_off_somewher
         t = study.ask()
         p = tune.space(t)
         assert not set(p) - set(train.DEFAULTS)
-        seen_off |= {k for k in ('aug_translate', 'aug_rotate', 'aug_scale', 'aug_brightness', 'aug_contrast',
-                                 'aug_saturation', 'cutout_size', 'grad_clip', 'ema_decay', 'dropout', 'label_smoothing')
-                     if not p[k]}
+        seen_off |= {
+            k
+            for k in (
+                'aug_translate',
+                'aug_rotate',
+                'aug_scale',
+                'aug_brightness',
+                'aug_contrast',
+                'aug_saturation',
+                'cutout_size',
+                'grad_clip',
+                'ema_decay',
+                'dropout',
+                'label_smoothing',
+            )
+            if not p[k]
+        }
         seen_off |= {'mix'} if p['mix'] == 'none' else set()
         study.tell(t, 0.0)
     assert len(seen_off) == 12
@@ -42,6 +57,7 @@ def test_a_trial_from_before_schedule_free_maps_to_train_arguments():
 
 def test_short_search(built):
     from conftest import SMALL
+
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     study = optuna.create_study(direction=tune.DIRECTION, sampler=tune.sampler(startup=2))
     study.enqueue_trial(tune.REFERENCE)

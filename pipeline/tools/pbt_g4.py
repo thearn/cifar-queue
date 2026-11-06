@@ -4,6 +4,7 @@ configuration is the best of the G4 card-matrix runs (results/g4-best.json, trai
 
     python pipeline/tools/pbt_g4.py [--population 8] [--concurrent 4] [--interval 3]
 """
+
 import argparse
 import json
 import sys
@@ -15,7 +16,8 @@ from common import RESULTS, dataset_file, executor, record  # noqa: E402
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--target', default='colab:cifar-g4')
-    ap.add_argument('--population', type=int, default=8); ap.add_argument('--concurrent', type=int, default=4)
+    ap.add_argument('--population', type=int, default=8)
+    ap.add_argument('--concurrent', type=int, default=4)
     ap.add_argument('--interval', type=int, default=3)
     ap.add_argument('--skip-probe', action='store_true')
     a = ap.parse_args()
@@ -28,8 +30,7 @@ if __name__ == '__main__':
             print(f'probe: job {f.job_id}', flush=True)
             out['probe'] = f.result()
             print(json.dumps(out['probe'], indent=1), flush=True)
-        f = ex.submit('cifarq.pbt:run_pbt', base=base, data=data, population=a.population,
-                      concurrent=a.concurrent, interval=a.interval)
+        f = ex.submit('cifarq.pbt:run_pbt', base=base, data=data, population=a.population, concurrent=a.concurrent, interval=a.interval)
         print(f'pbt: job {f.job_id}', flush=True)
         out['pbt'] = f.result()
         print(json.dumps(out['pbt']['best'], indent=1), flush=True)

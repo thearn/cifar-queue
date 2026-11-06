@@ -15,6 +15,7 @@ training patches, or None.
   convex weight per image in training (forward) and an independent one in the backward pass, 0.5 each at test.
 - ``wrn``: Zagoruyko & Komodakis (2016), WRN-``depth``-``k``, pre-activation basic blocks.
 """
+
 from __future__ import annotations
 
 import torch
@@ -41,16 +42,28 @@ def convmixer(dim: int = 256, depth: int = 8, kernel: int = 9, patch: int = 1, c
             return x + self.f(x)
 
     body = nn.Sequential(
-        nn.Conv2d(3, dim, patch, stride=patch), nn.GELU(), nn.BatchNorm2d(dim),
-        *[nn.Sequential(Residual(nn.Sequential(nn.Conv2d(dim, dim, kernel, groups=dim, padding='same'), nn.GELU(),
-                                               nn.BatchNorm2d(dim))),
-                        nn.Conv2d(dim, dim, 1), nn.GELU(), nn.BatchNorm2d(dim)) for _ in range(depth)],
-        nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(dim, classes))
+        nn.Conv2d(3, dim, patch, stride=patch),
+        nn.GELU(),
+        nn.BatchNorm2d(dim),
+        *[
+            nn.Sequential(
+                Residual(nn.Sequential(nn.Conv2d(dim, dim, kernel, groups=dim, padding='same'), nn.GELU(), nn.BatchNorm2d(dim))),
+                nn.Conv2d(dim, dim, 1),
+                nn.GELU(),
+                nn.BatchNorm2d(dim),
+            )
+            for _ in range(depth)
+        ],
+        nn.AdaptiveAvgPool2d(1),
+        nn.Flatten(),
+        nn.Linear(dim, classes),
+    )
     return _Net(body)
 
 
 def resnet9(width: int = 32, logit_scale: float = 0.125, activation: str = 'relu', classes: int = 10, **_):
     from .model import model
+
     return _Net(model(width, 0.0, activation, classes=classes, logit_scale=logit_scale))
 
 
@@ -64,12 +77,26 @@ def pyramidnet(depth: int = 110, alpha: float = 48, bottleneck: bool = False, cl
             super().__init__()
             cout = c * expansion
             if bottleneck:
-                self.f = nn.Sequential(nn.BatchNorm2d(cin), nn.Conv2d(cin, c, 1, bias=False), nn.BatchNorm2d(c), nn.ReLU(inplace=True),
-                                       nn.Conv2d(c, c, 3, stride, 1, bias=False), nn.BatchNorm2d(c), nn.ReLU(inplace=True),
-                                       nn.Conv2d(c, cout, 1, bias=False), nn.BatchNorm2d(cout))
+                self.f = nn.Sequential(
+                    nn.BatchNorm2d(cin),
+                    nn.Conv2d(cin, c, 1, bias=False),
+                    nn.BatchNorm2d(c),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(c, c, 3, stride, 1, bias=False),
+                    nn.BatchNorm2d(c),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(c, cout, 1, bias=False),
+                    nn.BatchNorm2d(cout),
+                )
             else:
-                self.f = nn.Sequential(nn.BatchNorm2d(cin), nn.Conv2d(cin, c, 3, stride, 1, bias=False), nn.BatchNorm2d(c),
-                                       nn.ReLU(inplace=True), nn.Conv2d(c, cout, 3, 1, 1, bias=False), nn.BatchNorm2d(cout))
+                self.f = nn.Sequential(
+                    nn.BatchNorm2d(cin),
+                    nn.Conv2d(cin, c, 3, stride, 1, bias=False),
+                    nn.BatchNorm2d(c),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(c, cout, 3, 1, 1, bias=False),
+                    nn.BatchNorm2d(cout),
+                )
             self.stride, self.pad = stride, cout - cin
 
         def forward(self, x):
@@ -94,8 +121,14 @@ def densenet(depth: int = 100, growth: int = 12, classes: int = 10, **_):
     class Layer(nn.Module):
         def __init__(self, cin):
             super().__init__()
-            self.f = nn.Sequential(nn.BatchNorm2d(cin), nn.ReLU(inplace=True), nn.Conv2d(cin, 4 * growth, 1, bias=False),
-                                   nn.BatchNorm2d(4 * growth), nn.ReLU(inplace=True), nn.Conv2d(4 * growth, growth, 3, 1, 1, bias=False))
+            self.f = nn.Sequential(
+                nn.BatchNorm2d(cin),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(cin, 4 * growth, 1, bias=False),
+                nn.BatchNorm2d(4 * growth),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(4 * growth, growth, 3, 1, 1, bias=False),
+            )
 
         def forward(self, x):
             return torch.cat([x, self.f(x)], 1)
@@ -130,10 +163,16 @@ def shakeshake(depth: int = 26, width: int = 32, classes: int = 10, **_):
     n = (depth - 2) // 6
 
     def branch(cin, cout, stride):
-        return nn.Sequential(nn.ReLU(), nn.Conv2d(cin, cout, 3, stride, 1, bias=False), nn.BatchNorm2d(cout), nn.ReLU(inplace=True),
-                             nn.Conv2d(cout, cout, 3, 1, 1, bias=False), nn.BatchNorm2d(cout))
+        return nn.Sequential(
+            nn.ReLU(),
+            nn.Conv2d(cin, cout, 3, stride, 1, bias=False),
+            nn.BatchNorm2d(cout),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(cout, cout, 3, 1, 1, bias=False),
+            nn.BatchNorm2d(cout),
+        )
 
-    class Shortcut(nn.Module):                              # (the paper's: two 1x1 paths, the second shifted a pixel)
+    class Shortcut(nn.Module):  # (the paper's: two 1x1 paths, the second shifted a pixel)
         def __init__(self, cin, cout, stride):
             super().__init__()
             self.a, self.b = nn.Conv2d(cin, cout // 2, 1, bias=False), nn.Conv2d(cin, cout // 2, 1, bias=False)
@@ -186,8 +225,7 @@ def wrn(depth: int = 16, k: int = 4, classes: int = 10, **_):
     return _Net(nn.Sequential(*layers))
 
 
-BUILDERS = {'convmixer': convmixer, 'resnet9': resnet9, 'pyramidnet': pyramidnet, 'densenet': densenet,
-            'shakeshake': shakeshake, 'wrn': wrn}
+BUILDERS = {'convmixer': convmixer, 'resnet9': resnet9, 'pyramidnet': pyramidnet, 'densenet': densenet, 'shakeshake': shakeshake, 'wrn': wrn}
 
 
 def build(arch: str, **kw):

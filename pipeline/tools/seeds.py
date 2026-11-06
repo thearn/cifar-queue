@@ -7,6 +7,7 @@ working tree).
     python pipeline/tools/seeds.py E0.3 --fn cifarq.train:train --params results/g4-best.json --seeds 0 1 2 3 4 --save
     python pipeline/tools/seeds.py E2.1 --preset airbench94 --set epochs=40 widths=[64,256,256] --seeds 0 --targets local
 """
+
 from __future__ import annotations
 
 import argparse
@@ -19,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from common import ROOT, RESULTS, dataset_file, executor, parse_sets, provenance, sets_arg, targets_arg  # noqa: E402
+from common import RESULTS, ROOT, dataset_file, executor, parse_sets, provenance, sets_arg, targets_arg  # noqa: E402
 
 PRESETS = {'airbench94': ('cifarq.airbench:train', 'AIRBENCH94'), 'airbench96': ('cifarq.airbench:train', 'AIRBENCH96')}
 
@@ -49,6 +50,7 @@ def main():
     params, fn = {}, a.fn
     if a.preset:
         from cifarq import airbench
+
         fn, name = PRESETS[a.preset]
         params = dict(getattr(airbench, name))
     if a.params:
@@ -56,8 +58,9 @@ def main():
     params.update(parse_sets(a.set))
     out = RESULTS / 'autoresearch' / a.experiment
     out.mkdir(parents=True, exist_ok=True)
-    snap, prov = snapshot(a.experiment), provenance()       # (as submitted: commits made while it runs are not its code)
+    snap, prov = snapshot(a.experiment), provenance()  # (as submitted: commits made while it runs are not its code)
     from common import stage_targets
+
     targets = stage_targets(a.stage, a.targets)
     t0 = time.time()
     # (stall_min: the queue flags a job whose log is quiet this long; airbench.train logs every epoch)
@@ -68,8 +71,7 @@ def main():
     if teachers:
         params['kd_teacher'] = ','.join(teachers)
     with executor(a.stage, targets, data=[dataset_file(), *teachers], **hints) as ex:
-        futures = {s: ex.submit(fn, data=str(dataset_file()), **({'save': 'model'} if a.save else {}), **{**params, 'seed': s})
-                   for s in a.seeds}
+        futures = {s: ex.submit(fn, data=str(dataset_file()), **({'save': 'model'} if a.save else {}), **{**params, 'seed': s}) for s in a.seeds}
         for s, f in futures.items():
             print(f'seed {s}: job {f.job}', flush=True)
         runs = []
@@ -79,15 +81,29 @@ def main():
             if a.save and r.get('saved'):
                 r['saved'] = str(Path(f.job) / r['saved'])
             runs.append(r)
-            seen = (f"test {r.get('test_acc')} (no TTA {r.get('test_acc_notta')})" if 'test_acc' in r
-                    else f"(no TTA {r.get('val_acc_notta')}; test sealed)")
-            print(f"seed {s}: val {r.get('val_acc')} {seen} {r.get('train_seconds')} s on {r.get('device')}", flush=True)
-    stat = lambda k: {'mean': round(statistics.mean(v), 5), 'sd': round(statistics.stdev(v), 5) if len(v) > 1 else None,
-                      'min': min(v), 'max': max(v)} if (v := [r[k] for r in runs if r.get(k) is not None]) else None
-    summary = {'experiment': a.experiment, 'fn': fn, 'params': params, 'seeds': a.seeds, 'targets': targets,
-               'snapshot': snap, 'provenance': prov, 'wall_seconds': round(time.time() - t0, 1),
-               **{k: stat(k) for k in ('val_acc', 'test_acc', 'val_acc_notta', 'test_acc_notta', 'train_seconds')},
-               'runs': [{k: v for k, v in r.items() if k != 'hyperparameters'} for r in runs]}
+            seen = (
+                f'test {r.get("test_acc")} (no TTA {r.get("test_acc_notta")})'
+                if 'test_acc' in r
+                else f'(no TTA {r.get("val_acc_notta")}; test sealed)'
+            )
+            print(f'seed {s}: val {r.get("val_acc")} {seen} {r.get("train_seconds")} s on {r.get("device")}', flush=True)
+    stat = (
+        lambda k: {'mean': round(statistics.mean(v), 5), 'sd': round(statistics.stdev(v), 5) if len(v) > 1 else None, 'min': min(v), 'max': max(v)}
+        if (v := [r[k] for r in runs if r.get(k) is not None])
+        else None
+    )
+    summary = {
+        'experiment': a.experiment,
+        'fn': fn,
+        'params': params,
+        'seeds': a.seeds,
+        'targets': targets,
+        'snapshot': snap,
+        'provenance': prov,
+        'wall_seconds': round(time.time() - t0, 1),
+        **{k: stat(k) for k in ('val_acc', 'test_acc', 'val_acc_notta', 'test_acc_notta', 'train_seconds')},
+        'runs': [{k: v for k, v in r.items() if k != 'hyperparameters'} for r in runs],
+    }
     f = out / f'{time.strftime("%Y%m%d-%H%M%S")}.json'
     f.write_text(json.dumps(summary, indent=1, default=str) + '\n')
     print(json.dumps({k: summary[k] for k in ('val_acc', 'val_acc_notta', 'test_acc', 'test_acc_notta', 'train_seconds')}, indent=1))

@@ -2,6 +2,7 @@
 32x32, the network's input), its five likeliest classes. The model is ``MODEL`` or ``CIFARQ_MODEL`` (a hub repo id
 or a local directory; default the published model). The examples are the first test image of each class, shown 4x nearest-
 neighbour, which the area-averaging takes back to the original pixels exactly."""
+
 import os
 from pathlib import Path
 
@@ -29,13 +30,15 @@ def classify(image, flip):
         return None, None
     x = to_input(image)
     probs = net.predict(x[None], tta_flip=flip)[0]
-    return {c: float(p) for c, p in zip(net.classes, probs)}, Image.fromarray(x).resize((128, 128), Image.Resampling.NEAREST)
+    return {c: float(p) for c, p in zip(net.classes, probs, strict=False)}, Image.fromarray(x).resize((128, 128), Image.Resampling.NEAREST)
 
 
 with gr.Blocks(title='CIFAR-10 ResNet-9') as demo:
-    gr.Markdown(f'# CIFAR-10 ResNet-9\nA ResNet-9 trained on [CIFAR-10](https://huggingface.co/datasets/uoft-cs/cifar10) '
-                f'with hyperparameters found by Optuna ([model card](https://huggingface.co/{MODEL})). '
-                'The network sees 32x32 pixels, so a photo is centre-cropped and shrunk first: the second image is what it sees.')
+    gr.Markdown(
+        f'# CIFAR-10 ResNet-9\nA ResNet-9 trained on [CIFAR-10](https://huggingface.co/datasets/uoft-cs/cifar10) '
+        f'with hyperparameters found by Optuna ([model card](https://huggingface.co/{MODEL})). '
+        'The network sees 32x32 pixels, so a photo is centre-cropped and shrunk first: the second image is what it sees.'
+    )
     with gr.Row():
         with gr.Column():
             image = gr.Image(type='pil', label='Image')

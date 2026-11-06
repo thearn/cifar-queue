@@ -15,6 +15,7 @@ spot L4), so the search is also a measure of those providers (runq hours, runq l
     python pipeline/57_front.py --trials 8 --resume                  # more trials, after a driver died or to extend
     python pipeline/57_front.py --dry-run                            # what it would do
 """
+
 import argparse
 import json
 import shutil
@@ -22,10 +23,10 @@ import time
 from pathlib import Path
 
 import optuna
-
 from common import RESULTS, dataset_file, executor, record, stage_targets, targets_arg
-from cifarq import families
 from runq.search.hpo import optuna_optimize
+
+from cifarq import families
 
 STUDY = 'eqairbench-front'
 
@@ -42,8 +43,16 @@ def teacher(targets: dict) -> Path:
         res, job = r.result(), Path(r.job)
     out.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(job / res['saved'], out)
-    record('front-teacher', {'model': str(out), 'job': str(job), 'val_acc': res.get('val_acc'),
-                             'val_acc_by_views': res.get('val_acc_by_views'), 'train_seconds': res.get('train_seconds')})
+    record(
+        'front-teacher',
+        {
+            'model': str(out),
+            'job': str(job),
+            'val_acc': res.get('val_acc'),
+            'val_acc_by_views': res.get('val_acc_by_views'),
+            'train_seconds': res.get('train_seconds'),
+        },
+    )
     print(f'teacher: {out} (val {res.get("val_acc")})', flush=True)
     return out
 
@@ -53,23 +62,26 @@ def study_for(storage: str, seed: int, resume: bool) -> optuna.Study:
     if resume:
         return optuna.load_study(study_name=STUDY, storage=storage, sampler=sampler)
     study = optuna.create_study(study_name=STUDY, storage=storage, directions=['maximize', 'minimize'], sampler=sampler)
-    probe = optuna.create_study(directions=['maximize', 'minimize']).ask()      # the space's distributions
+    probe = optuna.create_study(directions=['maximize', 'minimize']).ask()  # the space's distributions
     families.front_space(probe, kd='teacher')
     for s in families.front_seeds(RESULTS):
         dist = {k: probe.distributions[k] for k in s['params']}
-        study.add_trial(optuna.trial.create_trial(params=s['params'], distributions=dist, values=s['values'],
-                                                  user_attrs={'source': s['source'], 'seeds': s['seeds']}))
+        study.add_trial(
+            optuna.trial.create_trial(
+                params=s['params'], distributions=dist, values=s['values'], user_attrs={'source': s['source'], 'seeds': s['seeds']}
+            )
+        )
     fin = next(s for s in families.front_seeds(RESULTS) if s['source'].endswith('FIN'))['params']
     snap = lambda w, lo: max(lo, int(round(w / 8)) * 8)
-    for scale in (0.75, 0.5):                                 # the cheap end, unmeasured: the finalist made narrower
-        study.enqueue_trial({**fin, 'w1': snap(fin['w1'] * scale, 48), 'w2': snap(fin['w2'] * scale, 48),
-                             'w3': snap(fin['w3'] * scale, 64)})
+    for scale in (0.75, 0.5):  # the cheap end, unmeasured: the finalist made narrower
+        study.enqueue_trial({**fin, 'w1': snap(fin['w1'] * scale, 48), 'w2': snap(fin['w2'] * scale, 48), 'w3': snap(fin['w3'] * scale, 64)})
     return study
 
 
 if __name__ == '__main__':
     import sys
-    sys.stdout.reconfigure(line_buffering=True)             # (its log is followed while it runs: a line a trial)
+
+    sys.stdout.reconfigure(line_buffering=True)  # (its log is followed while it runs: a line a trial)
     ap = argparse.ArgumentParser()
     ap.add_argument('--trials', type=int, default=16)
     targets_arg(ap)
@@ -84,10 +96,19 @@ if __name__ == '__main__':
     storage = f'sqlite:///{a.storage.resolve()}'
     if a.dry_run:
         seeds = families.front_seeds(RESULTS)
-        print(json.dumps({'targets': targets, 'storage': storage, 'teacher': str(RESULTS / families.TEACHER_DIR),
-                          'teacher_exists': (RESULTS / families.TEACHER_DIR / 'model.safetensors').exists(),
-                          'seeds': [(s['source'], round(s['values'][0], 4), round(s['values'][1] / 1e6)) for s in seeds],
-                          'trials': a.trials}, indent=1))
+        print(
+            json.dumps(
+                {
+                    'targets': targets,
+                    'storage': storage,
+                    'teacher': str(RESULTS / families.TEACHER_DIR),
+                    'teacher_exists': (RESULTS / families.TEACHER_DIR / 'model.safetensors').exists(),
+                    'seeds': [(s['source'], round(s['values'][0], 4), round(s['values'][1] / 1e6)) for s in seeds],
+                    'trials': a.trials,
+                },
+                indent=1,
+            )
+        )
         raise SystemExit(0)
     kd = teacher(targets)
     if a.teacher_only:
@@ -96,13 +117,35 @@ if __name__ == '__main__':
     print(f'{STUDY}: {len(study.trials)} trials so far; new ones on {targets}', flush=True)
     t0 = time.time()
     with executor('front', targets, data=[dataset_file(), kd]) as ex:
-        optuna_optimize(study, families.TRAIN_FRONT, lambda t: families.front_space(t, kd=str(kd)), n_trials=a.trials,
-                        executor=ex, objective=['val_acc_notta', 'macs'], fixed={'data': str(dataset_file())},
-                        resume=True, minutes=a.minutes)
+        optuna_optimize(
+            study,
+            families.TRAIN_FRONT,
+            lambda t: families.front_space(t, kd=str(kd)),
+            n_trials=a.trials,
+            executor=ex,
+            objective=['val_acc_notta', 'macs'],
+            fixed={'data': str(dataset_file())},
+            resume=True,
+            minutes=a.minutes,
+        )
     front = sorted(study.best_trials, key=lambda t: t.values[1])
-    out = {'study': STUDY, 'storage': storage, 'trials': len(study.trials), 'search_seconds': round(time.time() - t0, 1),
-           'front': [{'trial': t.number, 'val_1view': t.values[0], 'macs': t.values[1], 'params': t.params,
-                      'source': t.user_attrs.get('source', 'new'), 'device': t.user_attrs.get('device')} for t in front]}
+    out = {
+        'study': STUDY,
+        'storage': storage,
+        'trials': len(study.trials),
+        'search_seconds': round(time.time() - t0, 1),
+        'front': [
+            {
+                'trial': t.number,
+                'val_1view': t.values[0],
+                'macs': t.values[1],
+                'params': t.params,
+                'source': t.user_attrs.get('source', 'new'),
+                'device': t.user_attrs.get('device'),
+            }
+            for t in front
+        ],
+    }
     for f in out['front']:
         print(f'  {f["macs"] / 1e6:6.0f} M MACs  {f["val_1view"]:.4f}  trial {f["trial"]} ({f["source"]}, {f["device"]})')
     print('saved', record('front', out))

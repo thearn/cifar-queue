@@ -1,6 +1,7 @@
 """What the pipeline's stages share: an executor per stage from configs/compute.toml (runq's ``QueueExecutor``
 over the stage's targets, or ``Direct``: in this process, no queue), and the run record each stage writes to
 results/<stage>/<time>.json (git commit and dirty flag, dataset hash, versions, settings, results)."""
+
 from __future__ import annotations
 
 import argparse
@@ -47,7 +48,7 @@ class Direct(Executor):
                 result = getattr(import_module(module), function)(**kwargs)
             (job / 'result.json').write_text(json.dumps(result, indent=1, default=str) + '\n')
             future.set_result(result)
-        except Exception as e:                                  # (a failed call fails its future, as a failed job does)
+        except Exception as e:  # noqa: BLE001 - a failed call fails its future, as a failed job does
             future.set_exception(e)
         return future
 
@@ -56,6 +57,7 @@ def ensure_executors(targets: dict):
     """Register the executors ``targets`` names from configs/compute.toml's [executors] (any provider: colab, gce, or
     sky with its clouds, spot and store; ``runq clouds``), each with as many parallel slots as the stage gives it."""
     from runq.queue import executors
+
     executors.ensure(targets, COMPUTE['executors'], log=lambda s: None)
 
 
@@ -76,13 +78,19 @@ def executor(stage: str, targets: dict, data=(), send=(), **hints) -> Executor:
             raise SystemExit('direct runs in this process: it cannot share a stage with queue targets')
         return Direct(root)
     from runq.search.futures import QueueExecutor
+
     ensure_executors(targets)
     return QueueExecutor(root, targets=targets, path=[SRC, *send], data=[str(d) for d in data], **hints)
 
 
 def targets_arg(ap: argparse.ArgumentParser):
-    ap.add_argument('--targets', nargs='+', default=None, metavar='TARGET[=SLOTS]',
-                    help='where the jobs run: direct, local, colab:NAME (default: configs/compute.toml)')
+    ap.add_argument(
+        '--targets',
+        nargs='+',
+        default=None,
+        metavar='TARGET[=SLOTS]',
+        help='where the jobs run: direct, local, colab:NAME (default: configs/compute.toml)',
+    )
 
 
 def sets_arg(ap: argparse.ArgumentParser):
@@ -103,15 +111,25 @@ def parse_sets(sets: list[str]) -> dict:
 
 def provenance() -> dict:
     """The git commit (and whether the tree had uncommitted changes), the dataset's hash, and the versions."""
+
     def git(*args):
         r = subprocess.run(['git', '-C', str(ROOT), *args], capture_output=True, text=True)
         return r.stdout.strip() if r.returncode == 0 else None
+
     import torch
+
     import cifarq
+
     ds = paths.read_manifest('dataset') or {}
-    return {'commit': git('rev-parse', '--short', 'HEAD'), 'dirty': bool(git('status', '--porcelain', '--untracked-files=no')),
-            'dataset': ds.get('sha256'), 'package': cifarq.__version__, 'torch': torch.__version__,
-            'python': sys.version.split()[0], 'argv': sys.argv}
+    return {
+        'commit': git('rev-parse', '--short', 'HEAD'),
+        'dirty': bool(git('status', '--porcelain', '--untracked-files=no')),
+        'dataset': ds.get('sha256'),
+        'package': cifarq.__version__,
+        'torch': torch.__version__,
+        'python': sys.version.split()[0],
+        'argv': sys.argv,
+    }
 
 
 def record(stage: str, out: dict) -> Path:
@@ -119,8 +137,9 @@ def record(stage: str, out: dict) -> Path:
     d = RESULTS / stage
     d.mkdir(parents=True, exist_ok=True)
     f = d / f'{time.strftime("%Y%m%d-%H%M%S")}.json'
-    f.write_text(json.dumps({'stage': stage, 'time': time.strftime('%Y-%m-%d %H:%M:%S'), 'provenance': provenance(), **out},
-                            indent=1, default=str) + '\n')
+    f.write_text(
+        json.dumps({'stage': stage, 'time': time.strftime('%Y-%m-%d %H:%M:%S'), 'provenance': provenance(), **out}, indent=1, default=str) + '\n'
+    )
     return f
 
 

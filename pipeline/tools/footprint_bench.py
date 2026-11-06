@@ -4,6 +4,7 @@ bytes, MACs, peak GPU and CPU memory, latency and throughput, and its footprint 
     python pipeline/tools/footprint_bench.py --ref results/models/B0 results/models/candidate ... [--cap 2000000] [--no-gpu]
     python pipeline/tools/footprint_bench.py --repeat 5 results/models/B0        # the evaluator's repeatability check
 """
+
 from __future__ import annotations
 
 import argparse
@@ -34,9 +35,14 @@ def main():
         reps = [footprint.bench(m, gpu=not a.no_gpu) for _ in range(a.repeat)]
         row = reps[0]
         if a.repeat > 1:
-            row['cv'] = {name: {k: round(statistics.pstdev(v) / statistics.mean(v), 4) for k in ('p50_ms', 'rss_mb', 'peak_rss_mb', 'peak_gpu_mb')
-                                if k in reps[0]['runs'][name] and statistics.mean(v := [r['runs'][name][k] for r in reps])}
-                         for name in reps[0]['runs']}
+            row['cv'] = {
+                name: {
+                    k: round(statistics.pstdev(v) / statistics.mean(v), 4)
+                    for k in ('p50_ms', 'rss_mb', 'peak_rss_mb', 'peak_gpu_mb')
+                    if k in reps[0]['runs'][name] and statistics.mean(v := [r['runs'][name][k] for r in reps])
+                }
+                for name in reps[0]['runs']
+            }
             row['repeats'] = [r['runs'] for r in reps]
         if ref:
             row['class'] = footprint.classify(row, ref, a.cap)

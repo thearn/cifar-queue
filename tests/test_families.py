@@ -1,5 +1,6 @@
 """The session's search spaces: every warm point is a point of its space under the cap, sampled configurations over
 the cap are pruned at step 0 without training, and the spaces reach both sides of the cap."""
+
 import optuna
 import pytest
 
@@ -24,7 +25,7 @@ def test_the_space_reaches_both_sides_of_the_cap(family):
         h = {**airbench.DEFAULTS, **{k: v for k, v in p.items() if k != 'param_cap'}}
         over += airbench.param_counts(airbench.build(h)[0])['stored'] > p['param_cap']
         study.tell(t, 0.0)
-    assert over < 60 and (over > 0 or family == 'resnet9')    # (resnet9's widths stop under the cap)
+    assert over < 60 and (over > 0 or family == 'resnet9')  # (resnet9's widths stop under the cap)
 
 
 def test_over_the_cap_is_pruned_without_training():

@@ -1,13 +1,22 @@
 """The network: a ResNet-9-style CNN (the fast CIFAR-10 architecture of the DAWNBench entries) with a width multiplier,
 dropout before the classifier, a choice of activation, of classifier head and of a scale on its logits, and optionally
 a fixed input whitening layer (``whitening_filters``). ``MEAN`` and ``STD`` normalise the images (per channel, 0-1)."""
+
 from __future__ import annotations
 
 MEAN, STD = (0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)
 
 
-def model(width: int = 32, dropout: float = 0.0, activation: str = 'relu', classes: int = 10, celu_alpha: float = 0.075,
-          head: str = 'linear', logit_scale: float = 1.0, whitening=None):
+def model(
+    width: int = 32,
+    dropout: float = 0.0,
+    activation: str = 'relu',
+    classes: int = 10,
+    celu_alpha: float = 0.075,
+    head: str = 'linear',
+    logit_scale: float = 1.0,
+    whitening=None,
+):
     """The network. ``head``: the classifier and how its output is normalised: ``linear`` (a linear layer, its logits
     times ``logit_scale``: Page's network is 0.125), ``cosine`` (the cosine of features and class weights, both L2
     normalised, times ``logit_scale``: NormFace, cosine classifiers) or ``bn`` (a linear layer, then batch norm on the
@@ -16,8 +25,10 @@ def model(width: int = 32, dropout: float = 0.0, activation: str = 'relu', class
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
-    act = {'relu': lambda: nn.ReLU(inplace=True), 'gelu': nn.GELU, 'silu': lambda: nn.SiLU(inplace=True),
-           'celu': lambda: nn.CELU(alpha=celu_alpha)}[activation]
+
+    act = {'relu': lambda: nn.ReLU(inplace=True), 'gelu': nn.GELU, 'silu': lambda: nn.SiLU(inplace=True), 'celu': lambda: nn.CELU(alpha=celu_alpha)}[
+        activation
+    ]
 
     def conv(cin, cout, pool=False):
         layers = [nn.Conv2d(cin, cout, 3, padding=1, bias=False), nn.BatchNorm2d(cout), act()]
@@ -42,7 +53,7 @@ def model(width: int = 32, dropout: float = 0.0, activation: str = 'relu', class
     class Cosine(nn.Module):
         def __init__(self, cin, cout):
             super().__init__()
-            self.weight = nn.Parameter(torch.randn(cout, cin) / cin ** 0.5)
+            self.weight = nn.Parameter(torch.randn(cout, cin) / cin**0.5)
 
         def forward(self, x):
             return F.normalize(x, dim=1) @ F.normalize(self.weight, dim=1).T
@@ -55,11 +66,25 @@ def model(width: int = 32, dropout: float = 0.0, activation: str = 'relu', class
         white.weight.requires_grad_(False)
         first = [white]
     cin = whitening.shape[0] if whitening is not None else 3
-    classifier = {'linear': lambda: [nn.Linear(8 * w, classes)], 'cosine': lambda: [Cosine(8 * w, classes)],
-                  'bn': lambda: [nn.Linear(8 * w, classes, bias=False), nn.BatchNorm1d(classes, affine=False)]}[head]()
-    return nn.Sequential(*first, conv(cin, w), conv(w, 2 * w, pool=True), Residual(2 * w), conv(2 * w, 4 * w, pool=True),
-                         conv(4 * w, 8 * w, pool=True), Residual(8 * w), nn.AdaptiveMaxPool2d(1), nn.Flatten(),
-                         nn.Dropout(dropout), *classifier, *([Scale(logit_scale)] if logit_scale != 1.0 else []))
+    classifier = {
+        'linear': lambda: [nn.Linear(8 * w, classes)],
+        'cosine': lambda: [Cosine(8 * w, classes)],
+        'bn': lambda: [nn.Linear(8 * w, classes, bias=False), nn.BatchNorm1d(classes, affine=False)],
+    }[head]()
+    return nn.Sequential(
+        *first,
+        conv(cin, w),
+        conv(w, 2 * w, pool=True),
+        Residual(2 * w),
+        conv(2 * w, 4 * w, pool=True),
+        conv(4 * w, 8 * w, pool=True),
+        Residual(8 * w),
+        nn.AdaptiveMaxPool2d(1),
+        nn.Flatten(),
+        nn.Dropout(dropout),
+        *classifier,
+        *([Scale(logit_scale)] if logit_scale != 1.0 else []),
+    )
 
 
 def whitening_filters(x, eps: float):
@@ -67,7 +92,8 @@ def whitening_filters(x, eps: float):
     covariance, each divided by the square root of its eigenvalue (plus ``eps``), as (27, 3, 3, 3) filters."""
     import torch
     import torch.nn.functional as F
-    patches = F.unfold(x.float(), 3).transpose(1, 2).reshape(-1, 27)          # every 3x3x3 patch, unpadded
+
+    patches = F.unfold(x.float(), 3).transpose(1, 2).reshape(-1, 27)  # every 3x3x3 patch, unpadded
     patches = patches - patches.mean(0)
     cov = patches.T @ patches / len(patches)
     vals, vecs = torch.linalg.eigh(cov.double())

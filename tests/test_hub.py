@@ -1,5 +1,6 @@
 """A trained network saved as a ``hub.ResNet9`` loads back with the same outputs (no GPU): every head, with and without
 the whitening layer, and ``predict``'s normalisation and flip averaging match the training code's."""
+
 import numpy as np
 import pytest
 import torch
@@ -11,15 +12,15 @@ from cifarq.hub import ResNet9, save
 @pytest.mark.parametrize('head,whiten', [('linear', False), ('cosine', True), ('bn', False)])
 def test_saved_network_loads_with_the_same_outputs(tmp_path, head, whiten):
     torch.manual_seed(0)
-    h = {**train.DEFAULTS, 'width': 16, 'head': head, 'logit_scale': 0.125, 'whiten': whiten, 'tta_flip': True,
-         'activation': 'celu'}
+    h = {**train.DEFAULTS, 'width': 16, 'head': head, 'logit_scale': 0.125, 'whiten': whiten, 'tta_flip': True, 'activation': 'celu'}
     images = np.random.default_rng(0).integers(0, 256, (8, 32, 32, 3), dtype=np.uint8)
     x = torch.from_numpy(images).permute(0, 3, 1, 2).float() / 255
     whitening = train.whitening_filters(x, h['whiten_eps']) if whiten else None
-    net = train.model(h['width'], h['dropout'], h['activation'], celu_alpha=h['celu_alpha'], head=head,
-                      logit_scale=h['logit_scale'], whitening=whitening).to(memory_format=torch.channels_last)
+    net = train.model(
+        h['width'], h['dropout'], h['activation'], celu_alpha=h['celu_alpha'], head=head, logit_scale=h['logit_scale'], whitening=whitening
+    ).to(memory_format=torch.channels_last)
     net.train()
-    for _ in range(3):                                       # batch-norm statistics away from their initial values
+    for _ in range(3):  # batch-norm statistics away from their initial values
         net(x)
     net.eval()
 

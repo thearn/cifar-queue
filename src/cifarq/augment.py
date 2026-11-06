@@ -8,21 +8,46 @@ pixel in its image's channel: the histogram-equalisation map for 1024 pixels), r
 posterize, contrast, brightness, sharpness, shear and translate in x and y; geometric ones fill with grey (0.5).
 ``apply`` takes and returns normalised images (``(x - mean) / std``), working in [0, 1] in between.
 """
+
 from __future__ import annotations
 
 import math
 
-OPS = ('identity', 'autocontrast', 'equalize', 'rotate', 'solarize', 'color', 'posterize', 'contrast', 'brightness',
-       'sharpness', 'shear_x', 'shear_y', 'translate_x', 'translate_y')
+OPS = (
+    'identity',
+    'autocontrast',
+    'equalize',
+    'rotate',
+    'solarize',
+    'color',
+    'posterize',
+    'contrast',
+    'brightness',
+    'sharpness',
+    'shear_x',
+    'shear_y',
+    'translate_x',
+    'translate_y',
+)
 # (maximum strength: TrivialAugment wide, RandAugment) at strength 1; signed ops draw a sign per image
-RANGES = {'rotate': (135.0, 30.0), 'solarize': (1.0, 1.0), 'color': (0.99, 0.9), 'posterize': (6, 4), 'contrast': (0.99, 0.9),
-          'brightness': (0.99, 0.9), 'sharpness': (0.99, 0.9), 'shear_x': (0.99, 0.3), 'shear_y': (0.99, 0.3),
-          'translate_x': (32.0, 14.4), 'translate_y': (32.0, 14.4)}
+RANGES = {
+    'rotate': (135.0, 30.0),
+    'solarize': (1.0, 1.0),
+    'color': (0.99, 0.9),
+    'posterize': (6, 4),
+    'contrast': (0.99, 0.9),
+    'brightness': (0.99, 0.9),
+    'sharpness': (0.99, 0.9),
+    'shear_x': (0.99, 0.3),
+    'shear_y': (0.99, 0.3),
+    'translate_x': (32.0, 14.4),
+    'translate_y': (32.0, 14.4),
+}
 SIGNED = {'rotate', 'color', 'contrast', 'brightness', 'sharpness', 'shear_x', 'shear_y', 'translate_x', 'translate_y'}
 
 
 def _gray(x):
-    return (0.299 * x[:, 0:1] + 0.587 * x[:, 1:2] + 0.114 * x[:, 2:3])
+    return 0.299 * x[:, 0:1] + 0.587 * x[:, 1:2] + 0.114 * x[:, 2:3]
 
 
 def _blend(a, b, f):
@@ -32,6 +57,7 @@ def _blend(a, b, f):
 
 def _affine(x, theta):
     import torch.nn.functional as F
+
     grid = F.affine_grid(theta, list(x.shape), align_corners=False)
     ones = x.new_ones(x.shape[0], 1, *x.shape[2:])
     out = F.grid_sample(x, grid, mode='bilinear', padding_mode='zeros', align_corners=False)
@@ -43,6 +69,7 @@ def _op(name: str, x, v):
     """Operation ``name`` on images ``x`` (n, 3, H, W) in [0, 1] at signed strengths ``v`` (n,) in its own units."""
     import torch
     import torch.nn.functional as F
+
     n, dev = x.shape[0], x.device
     if name == 'identity':
         return x
@@ -53,10 +80,10 @@ def _op(name: str, x, v):
         flat = x.reshape(n * 3, -1)
         ranks = torch.searchsorted(flat.sort(1).values.contiguous(), flat.contiguous(), right=True)
         return (ranks.float() / flat.shape[1]).reshape(x.shape)
-    if name == 'solarize':                                   # v: the share of the range left unsolarized, 1 = none
+    if name == 'solarize':  # v: the share of the range left unsolarized, 1 = none
         t = (1 - v).view(-1, 1, 1, 1)
         return torch.where(x >= t, 1 - x, x)
-    if name == 'posterize':                                  # v: bits removed (0-6)
+    if name == 'posterize':  # v: bits removed (0-6)
         keep = (8 - v.round()).clamp(1, 8).view(-1, 1, 1, 1)
         q = 2 ** (8 - keep)
         return torch.floor(x * 255 / q) * q / 255
@@ -90,6 +117,7 @@ def _op(name: str, x, v):
 def _strength(name: str, s, wide: bool):
     """Strengths ``s`` in [0, 1] (n,) as signed values in the operation's units."""
     import torch
+
     if name not in RANGES:
         return s
     v = s * RANGES[name][0 if wide else 1]
@@ -101,6 +129,7 @@ def _strength(name: str, s, wide: bool):
 def policy(x, kind: str, m: int = 9):
     """``kind`` (``ta_wide`` or ``randaugment``) on images ``x`` in [0, 1]."""
     import torch
+
     n, dev = x.shape[0], x.device
     rounds = 1 if kind == 'ta_wide' else 2
     for _ in range(rounds):
@@ -123,8 +152,9 @@ def policy(x, kind: str, m: int = 9):
 def apply(x, kind: str, m: int, mean, std, chunk: int = 5000):
     """``policy`` on normalised images ``x`` (any float type), in chunks; normalised images of ``x``'s type back."""
     import torch
+
     out = torch.empty_like(x)
     for i in range(0, len(x), chunk):
-        xb = (x[i:i + chunk].float() * std + mean).clamp(0, 1)
-        out[i:i + chunk] = ((policy(xb, kind, m) - mean) / std).to(x.dtype)
+        xb = (x[i : i + chunk].float() * std + mean).clamp(0, 1)
+        out[i : i + chunk] = ((policy(xb, kind, m) - mean) / std).to(x.dtype)
     return out

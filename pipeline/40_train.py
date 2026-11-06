@@ -7,10 +7,12 @@ L4: 88.9 % validation in 37 s).
     python pipeline/40_train.py --targets direct --set epochs=2         # in this process, no queue
     python pipeline/40_train.py --save                                  # keeping the network (in the job's directory)
 """
+
 import argparse
 import json
 
 from common import dataset_file, executor, parse_sets, record, sets_arg, stage_targets, targets_arg
+
 from cifarq import tune
 
 if __name__ == '__main__':

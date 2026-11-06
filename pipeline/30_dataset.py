@@ -1,10 +1,12 @@
 """Stage 3: the decoded files split into train, validation and test (configs/data.toml, [split]: the fixed
 permutation every study so far used), checked (validate.dataset) and written as one array file with
 data/manifests/dataset.json. Commit the manifest: it is what every later result names as its data."""
+
 import argparse
 import json
 
 from common import record
+
 from cifarq.data import dataset
 
 if __name__ == '__main__':

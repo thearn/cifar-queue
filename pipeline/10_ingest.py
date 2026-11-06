@@ -1,10 +1,12 @@
 """Stage 1: CIFAR-10's parquet files from the Hugging Face hub at the revision pinned in configs/data.toml, into
 data/raw/, and data/manifests/raw.json (the source, its revision, each file's sha256). A no-op when the source and
 settings have not changed (--force: fetch again)."""
+
 import argparse
 import json
 
 from common import record
+
 from cifarq import paths
 from cifarq.data import ingest, storage
 

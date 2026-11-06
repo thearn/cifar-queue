@@ -1,6 +1,7 @@
 """Watch a search as it runs: trials done, running and failed (by device), trials an hour, the best so far and the
 top five. Reads an Optuna study's SQLite file: mode 3's (results/tune-study.db, written here as trials end; mode 3's
-first runs are in results/distributed-study.db) or mode 2's (the job's study.db, brought back from the VM every two minutes while it runs: job.json ``watch``).
+first runs are in results/distributed-study.db) or mode 2's (the job's study.db, brought back from the VM every two
+minutes while it runs: job.json ``watch``).
 
     python pipeline/tools/watch.py               # the newest study of results/tune-study.db
     python pipeline/tools/watch.py results/distributed-study.db
@@ -9,6 +10,7 @@ first runs are in results/distributed-study.db) or mode 2's (the job's study.db,
 
 For charts in a browser: uvx optuna-dashboard sqlite:///results/tune-study.db
 """
+
 import argparse
 import collections
 import os
@@ -25,8 +27,9 @@ KEYS = ('width', 'epochs', 'optimizer', 'sgd_lr', 'adamw_lr', 'batch_size', 'act
 
 
 def newest_mode2_db() -> Path | None:
-    dbs = sorted([*(RESULTS / 'jobs' / 'on-vm').glob('*/study.db'), *(RESULTS / 'jobs' / 'tune_on_vm').glob('*/study.db')],
-                 key=lambda p: p.stat().st_mtime)
+    dbs = sorted(
+        [*(RESULTS / 'jobs' / 'on-vm').glob('*/study.db'), *(RESULTS / 'jobs' / 'tune_on_vm').glob('*/study.db')], key=lambda p: p.stat().st_mtime
+    )
     return dbs[-1] if dbs else None
 
 
@@ -36,7 +39,8 @@ def load(db: Path):
     src = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
     dst = sqlite3.connect(tmp)
     src.backup(dst)
-    src.close(); dst.close()
+    src.close()
+    dst.close()
     storage = f'sqlite:///{tmp}'
     name = optuna.study.get_all_study_names(storage)[-1]
     return optuna.load_study(study_name=name, storage=storage), tmp
@@ -59,13 +63,17 @@ def report(db: Path) -> str:
         lines.append(f'{len(done) / hours:.0f} trials an hour over {hours * 60:.0f} min; by device: {dict(by)}')
         top = sorted(done, key=lambda t: t.value, reverse=True)[:5]
         best = top[0]
-        lines.append(f'best: trial {best.number}  val {best.value:.4f}  test {best.user_attrs.get("test_acc")}  '
-                     f'{best.user_attrs.get("train_seconds")} s on {best.user_attrs.get("device")}')
+        lines.append(
+            f'best: trial {best.number}  val {best.value:.4f}  test {best.user_attrs.get("test_acc")}  '
+            f'{best.user_attrs.get("train_seconds")} s on {best.user_attrs.get("device")}'
+        )
         lines.append('      ' + ', '.join(f'{k}={v:.3g}' if isinstance(v, float) else f'{k}={v}' for k, v in best.params.items()))
         lines.append('top 5:')
         for t in top:
-            lines.append(f'  #{t.number:3d}  {t.value:.4f}  ' + '  '.join(f'{k}={t.params[k]:.3g}' if isinstance(t.params[k], float)
-                                                                          else f'{k}={t.params[k]}' for k in KEYS if k in t.params))
+            lines.append(
+                f'  #{t.number:3d}  {t.value:.4f}  '
+                + '  '.join(f'{k}={t.params[k]:.3g}' if isinstance(t.params[k], float) else f'{k}={t.params[k]}' for k in KEYS if k in t.params)
+            )
         running = [t for t in trials if t.state.name == 'RUNNING']
         if running:
             lines.append(f'running: {len(running)} (trials {", ".join(str(t.number) for t in running)})')
@@ -76,7 +84,7 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('db', nargs='?', type=Path)
     ap.add_argument('--mode2', action='store_true', help="the newest mode 2 job's study.db")
-    ap.add_argument('--every', type=float, default=30.)
+    ap.add_argument('--every', type=float, default=30.0)
     ap.add_argument('--once', action='store_true')
     a = ap.parse_args()
     optuna.logging.set_verbosity(optuna.logging.WARNING)

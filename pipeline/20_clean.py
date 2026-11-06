@@ -2,10 +2,12 @@
 stage's targets (configs/compute.toml: in this process by default), then checked (validate.cleaned: both splits there,
 nothing dropped) and recorded in data/manifests/clean.json. A no-op when the raw files and the rules have not
 changed."""
+
 import argparse
 import json
 
 from common import executor, record, stage_targets, targets_arg
+
 from cifarq.data import clean, ingest
 
 if __name__ == '__main__':

@@ -7,6 +7,7 @@ least ``--keep-top`` of the final top 10 %, as JSON for ``55_tune_on_vm.py --pru
 
     python pipeline/tools/fit_rungs.py results/jobs/tune_on_vm/00012-on_vm/study.db [--keep-top 0.9]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -52,14 +53,14 @@ def main():
     if len(curves) < 20:
         raise SystemExit('fewer than 20 complete curves: run the report-only phase longer')
     for row in rung_check(curves, points=tuple(range(10, 91, 10))):
-        print(f"  {row['percent']:3d} %: rho {row['rho']:.2f}; keeping the top third cuts {row['top_cut']} of {row['top']}")
+        print(f'  {row["percent"]:3d} %: rho {row["rho"]:.2f}; keeping the top third cuts {row["top_cut"]} of {row["top"]}')
     rows = []
     for rungs, keep in itertools.product(CANDIDATES, (1 / 3, 1 / 2, 2 / 3)):
         s = simulate_rungs(curves, rungs, keep)
         rows.append({'rungs': rungs, 'keep': round(keep, 3), **s})
     ok = [r for r in rows if r['best_kept'] and r['top_kept'] >= a.keep_top * r['top']]
     for r in sorted(ok, key=lambda r: r['compute'])[:8]:
-        print(f"rungs {r['rungs']} keep {r['keep']}: compute {100 * r['compute']:.0f} %, top kept {r['top_kept']}/{r['top']}")
+        print(f'rungs {r["rungs"]} keep {r["keep"]}: compute {100 * r["compute"]:.0f} %, top kept {r["top_kept"]}/{r["top"]}')
     if not ok:
         raise SystemExit('no setting keeps the best trial and the top: run without pruning')
     best = min(ok, key=lambda r: r['compute'])
