@@ -1,0 +1,25 @@
+# Lint and formatting hygiene on the staged files; never the tests (the scheduler tests run over a minute, and a hook
+# people skip is worse than none). Ruff through uvx, so nothing is installed into the project's venv.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uvx ruff@0.14.0 format --force-exclude
+        language: system
+        types: [python]
+      - id: ruff
+        name: ruff check
+        entry: uvx ruff@0.14.0 check --force-exclude
+        language: system
+        types: [python]
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=1000]

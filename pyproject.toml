@@ -17,7 +17,7 @@ train = ["optuna>=4", "pyarrow", "pillow"]          # the data stages, the searc
 sf = ["schedulefree"]                                # schedule-free optimisers in the search space
 ray = ["ray[tune]>=2.50"]                            # mode 2 driven by Ray Tune (on_vm_ray), PBT
 app = ["gradio>=5", "pillow"]                        # app/app.py
-test = ["pytest", "optuna>=4", "pyarrow", "pillow"]
+test = ["pytest", "optuna>=4", "pyarrow", "pillow", "vulture==2.14", "ruff==0.14.0"]
 queue = ["runq[gcs]"]                         # pipeline/ on the queue (runq: not public)
 
 [tool.setuptools.packages.find]
@@ -26,3 +26,22 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]                               # (not results/publish/: a staged copy of the repository)
 markers = ["queue: runs a job through runq's daemon (skipped unless it is set up)"]
+
+[tool.ruff]
+line-length = 150               # the house style (runq's); 130 wraps lines for no behaviour
+target-version = "py311"
+extend-exclude = ["results", "data"]
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "UP", "SIM", "BLE"]
+ignore = [
+  "E731",             # a lambda assigned to a name: small local helpers
+  "E741",             # single-letter names beside their definitions
+  "SIM108", "SIM117", # ternaries and merged with-blocks forced where two lines read better
+  "SIM105",           # try/except/pass written out rather than contextlib.suppress
+  "SIM102",           # nested ifs kept where a comment sits between the conditions
+  "SIM115",           # a file opened for a child process's output, held by the process, not a with-block
+]
