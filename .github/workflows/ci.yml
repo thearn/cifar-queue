@@ -6,6 +6,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      # format and lint, as the pre-commit hook does, so a clone without the hook installed is held to them too
+      - run: uvx ruff@0.14.0 format --check .
+      - run: uvx ruff@0.14.0 check .
       - run: uv venv --python 3.12
       # CPU torch; runq is not public, so the search and queue tests skip themselves
       - run: uv pip install torch --index-url https://download.pytorch.org/whl/cpu
