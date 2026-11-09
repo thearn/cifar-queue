@@ -13,7 +13,7 @@ from PIL import Image
 from cifarq.hub import ResNet9
 
 MODEL = os.environ.get('MODEL') or os.environ.get('CIFARQ_MODEL', 'thearn/cifar10-resnet9')
-net = ResNet9.from_pretrained(MODEL).eval()
+net = ResNet9.from_pretrained(MODEL)
 EXAMPLES = sorted(str(p) for p in (Path(__file__).parent / 'examples').glob('*.png'))
 
 

@@ -1,7 +1,7 @@
 """The airbench family (K. Jordan, "94 % on CIFAR-10 in 3.29 seconds on a single GPU", 2024; github.com/KellerJordan/
 cifar10-airbench at 4c1b6d1, ``legacy/airbench94.py`` and ``legacy/airbench96.py``) ported to this project's dataset
 and job contract, every choice a hyperparameter (``DEFAULTS``; ``AIRBENCH94`` and ``AIRBENCH96`` are the two published
-recipes as points of it).
+recipes as points of it). JAX (Flax NNX, Optax) on NHWC images, the shared pieces in ``jx``.
 
 The network: a frozen 2x2 patch-whitening convolution (its 24 filters the training patches' eigenvectors over the
 square roots of their eigenvalues, and their negatives; its bias trained for the first ``whiten_bias_epochs``), GELU,
@@ -14,14 +14,26 @@ The training: Nesterov SGD at a learning rate, momentum and weight decay express
 each other), the loss summed over the batch with label smoothing; a linear warmup over ``warmup_frac`` of the steps
 from 0.2 of the peak, then linear to ``final_lr_frac``; Lookahead every 5 steps (its pull growing as the cube of the
 progress); alternating flip (each image flipped at random once, then all flipped together every other epoch), random
-translation from reflect padding, cutout. Weights are fp16 and batch norm fp32, as in the original (``precision``).
-Evaluation averages ``tta_level`` views: 0 the image, 1 and its mirror, 2 and both shifted one pixel up-left and
-down-right (6 views, the shifted ones at half weight).
+translation from reflect padding, cutout. Evaluation averages ``tta_level`` views: 0 the image, 1 and its mirror, 2 and
+both shifted one pixel up-left and down-right (6 views, the shifted ones at half weight).
 
 Additions, off by default: ``train_on='train+val'`` (all 50000 images, the published setting, for a record-format
 run: the validation accuracy is then on trained images and only reported), and distillation from a teacher saved by
 ``train(save=...)`` (``kd_teacher``: its directory, or several separated by commas for an ensemble; ``kd_weight`` of
 the loss is the KL divergence to its softened predictions at ``kd_temp``, the teacher run on each augmented batch).
+
+In JAX: an epoch is one jitted ``lax.scan`` over its steps (a step past the schedule's last is skipped, so a
+fractional last epoch is the same program); the epoch's augmented images are made on the device first. Optimiser and
+loss scalars are traced arguments (``jx.dynamic``); the architecture and switches are static. Parameter groups are
+labels over the parameter tree (``labels``): batch-norm biases, batch-norm scales (frozen unless ``bn_scale``), the
+whitening weight (frozen) and bias (trained for ``whiten_bias_epochs``), the filters (Muon's, under ``optimizer=
+'muon'``) and the rest.
+
+Differences from the Torch port, all numerical: ``precision`` 'fp16' and 'amp' both mean float32 weights and
+optimiser state with bfloat16 arithmetic on a GPU (Torch's 'fp16' kept the weights themselves in float16); on a CPU
+the arithmetic is float32, as before. Batch norm's running variance is the biased batch variance (Torch's is
+unbiased, a factor n/(n-1) at n = batch x pixels). The whitening and PCA eigenvectors are computed in float64 (Torch:
+float32). The loss is computed in float32 under every precision.
 """
 
 from __future__ import annotations
@@ -30,6 +42,19 @@ import json
 import math
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Sequence
+    from types import ModuleType
+    from typing import Any
+
+    import jax
+    import numpy as np
+    import optax
+    from flax import nnx
+    from jax.typing import DTypeLike
+    from numpy.typing import ArrayLike as NPArrayLike
 
 DEFAULTS = dict(
     # network
@@ -108,9 +133,146 @@ AIRBENCH96 = {
 
 MEAN, STD = (0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)
 
+# traced in the step: a change of these is not a recompile
+DYNAMIC = (
+    'lr',
+    'momentum',
+    'weight_decay',
+    'bias_scaler',
+    'label_smoothing',
+    'warmup_frac',
+    'final_lr_frac',
+    'kd_weight',
+    'kd_temp',
+    'muon_lr',
+    'muon_momentum',
+    'beta2',
+)
+
+
+def _modules() -> dict[str, type]:
+    """The module classes (built on first use, so importing this file costs no JAX import)."""
+    global _M
+    if '_M' in globals():
+        return _M
+    import jax
+    import jax.numpy as jnp
+    from flax import nnx
+
+    from . import jx, methods
+
+    gelu = lambda x: jax.nn.gelu(x, approximate=False)
+
+    class Conv(methods.Kernel3):
+        """A convolution initialised as airbench's: PyTorch's default, a zero bias, then a partial identity (dirac) on
+        its first ``cin`` filters."""
+
+        def __init__(self, cin: int, cout: int, k: int = 3, padding: int | str = 1, bias: bool = False, *, dtype: DTypeLike, rngs: nnx.Rngs) -> None:
+            w = jx.torch_kernel_init()(rngs.params(), (k, k, cin, cout))
+            self.weight = nnx.Param(methods.dirac(w, cin))
+            self.bias = nnx.Param(jnp.zeros((cout,), jnp.float32)) if bias else None
+            self.padding = [(padding, padding)] * 2 if isinstance(padding, int) else padding
+            self.dtype, self.srf = dtype, False
+            self.srf_able = k == 3
+
+        def __call__(self, x: jax.Array) -> jax.Array:
+            y = methods._conv(x, self._kernel(), self.dtype, self.padding)
+            return y + self.bias[...].astype(y.dtype) if self.bias is not None else y
+
+    class PairNorm(nnx.Module):
+        """Batch norm with one set of statistics for all ``k`` members of a field (group-major channels)."""
+
+        def __init__(self, c: int, k: int, momentum: float, *, rngs: nnx.Rngs) -> None:
+            self.k, self.bn = k, jx.batchnorm(c, momentum=momentum, eps=1e-12, rngs=rngs)
+
+        def __call__(self, x: jax.Array) -> jax.Array:
+            n, hh, ww, kc = x.shape
+            y = x.reshape(n, hh, ww, self.k, kc // self.k).transpose(0, 3, 1, 2, 4).reshape(n * self.k, hh, ww, kc // self.k)
+            y = self.bn(y)
+            return y.reshape(n, self.k, hh, ww, kc // self.k).transpose(0, 2, 3, 1, 4).reshape(n, hh, ww, kc)
+
+    class Group(nnx.Module):
+        def __init__(self, cin: int, cout: int, eq: str, cfg: dict, *, rngs: nnx.Rngs) -> None:
+            depth, tie, dtype, mom = cfg['depth'], cfg['tie'], cfg['dtype'], cfg['bn_momentum']
+            eq_conv = {'d1': methods.FlipConv, 'd4': methods.P4MConv}[cfg['eq_group']]
+            k = eq_conv.order
+            if eq:  # 'lift' (plain in, pairs out) or 'pair' (pairs in and out)
+                self.conv1, self.norm1 = eq_conv(cin, cout, lift=eq == 'lift', dtype=dtype, rngs=rngs), PairNorm(cout, k, mom, rngs=rngs)
+                self.convs = nnx.List([eq_conv(cout, cout, dtype=dtype, rngs=rngs) for _ in range(depth - 1)])
+                norm = lambda: PairNorm(cout, k, mom, rngs=rngs)
+            else:
+                self.conv1, self.norm1 = Conv(cin, cout, dtype=dtype, rngs=rngs), jx.batchnorm(cout, momentum=mom, eps=1e-12, rngs=rngs)
+                self.convs = nnx.List([Conv(cout, cout, dtype=dtype, rngs=rngs) for _ in range(depth - 1)])
+                norm = lambda: jx.batchnorm(cout, momentum=mom, eps=1e-12, rngs=rngs)
+            self.pool = methods.MaxBlurPool() if cfg['blur_pool'] else None
+            self.se = methods.FieldSE(cout, k if eq else 1, cfg['se'], dtype=dtype, rngs=rngs) if cfg['se'] else None
+            self.norms = nnx.List([norm() for _ in range(depth - 1 + (tie if depth > 1 else 0))])
+            self.depth, self.tie = depth, tie
+
+        def _conv(self, conv: Callable[[jax.Array], jax.Array], x: jax.Array, record: dict | None) -> jax.Array:
+            if record is not None:
+                record[id(conv)] = x
+            return conv(x)
+
+        def __call__(self, x: jax.Array, record: dict | None = None) -> jax.Array:
+            y = self._conv(self.conv1, x, record)
+            y = self.pool(y) if self.pool is not None else jx.max_pool(y)
+            x = gelu(self.norm1(y))
+            x0 = x
+            convs = list(self.convs) + ([self.convs[-1]] * self.tie if len(self.convs) else [])
+            for i, (conv, norm) in enumerate(zip(convs, self.norms, strict=False)):
+                x = norm(self._conv(conv, x, record))
+                if self.depth >= 3 and i == len(convs) - 1:
+                    x = x + x0  # (depth 3: the residual over the last two)
+                x = gelu(x)
+            return self.se(x) if self.se is not None else x
+
+    class Airbench(nnx.Module):
+        def __init__(self, cfg: dict, *, rngs: nnx.Rngs) -> None:
+            ww = 2 * 3 * cfg['whiten_kernel'] ** 2
+            w1, w2, w3 = cfg['widths']
+            fe = cfg['flip_eq']
+            eqs = [''] * (3 - fe) + (['lift'] + ['pair'] * (fe - 1) if fe else [])
+            self.whiten = Conv(3, ww, cfg['whiten_kernel'], padding=0, bias=True, dtype=cfg['dtype'], rngs=rngs)
+            self.whiten.srf_able = False  # (frozen: not a coefficient layer)
+            self.groups = nnx.List(
+                [Group(ww, w1, eqs[0], cfg, rngs=rngs), Group(w1, w2, eqs[1], cfg, rngs=rngs), Group(w2, w3, eqs[2], cfg, rngs=rngs)]
+            )
+            k = {'d1': 2, 'd4': 8}[cfg['eq_group']]
+            self.gpool = methods.GroupMaxPool(k) if fe else None
+            self.head = nnx.Linear(w3, cfg['classes'], use_bias=False, kernel_init=jx.torch_kernel_init(), dtype=cfg['dtype'], rngs=rngs)
+            self.scaling_factor = float(cfg['scaling_factor'])
+
+        def convs_in_order(self) -> list[nnx.Module]:
+            out = []
+            for g in self.groups:
+                for c in [g.conv1, *g.convs]:
+                    if isinstance(c, Conv) and c.srf_able:
+                        out.append(c)
+            return out
+
+        def __call__(self, x: jax.Array, record: dict | None = None) -> jax.Array:
+            x = gelu(self.whiten(x))
+            for g in self.groups:
+                x = g(x, record)
+            x = self.gpool(x) if self.gpool is not None else jx.max_pool(x, 3).reshape(x.shape[0], -1)
+            return self.head(x).astype(jnp.float32) * self.scaling_factor
+
+    _M = {'Conv': Conv, 'Airbench': Airbench, 'PairNorm': PairNorm, 'Group': Group}
+    return _M
+
+
+def _compute_dtype(h: dict, device: str = 'auto') -> DTypeLike:
+    import jax.numpy as jnp
+
+    from . import jx
+
+    gpu = jx.pick(device).platform == 'gpu'
+    return jnp.bfloat16 if gpu and h.get('precision', 'fp16') != 'fp32' else jnp.float32
+
 
 def model(
-    widths=(64, 256, 256),
+    widths: Iterable[int] = (64, 256, 256),
     depth: int = 2,
     scaling_factor: float = 1 / 9,
     bn_momentum: float = 0.4,
@@ -122,233 +284,195 @@ def model(
     blur_pool: bool = False,
     se: int = 0,
     srf: bool = False,
-):
-    """The network (fp32; ``train`` casts it). ``bn_momentum`` is PyTorch's (the weight of the new batch).
-    ``tie`` (method MT5): each group's last convolution applied ``tie`` more times, its weights shared, a batch norm of
-    its own each time (depth at no stored convolution weights). ``flip_eq`` (method MT1): the last ``flip_eq`` groups
-    made equivariant to horizontal flips (``methods.FlipConv``: channel pairs, half the free weights of a plain
-    convolution of twice the width), the features pooled over each pair at the end (invariance by construction, not by
-    test-time mirroring). ``eq_group`` 'd4': those groups equivariant to the flips and quarter turns instead
-    (``methods.P4MConv``, fields of 8, 1/8 of the expanded convolution's weights). ``blur_pool``: each group's
-    downsampling anti-aliased (``methods.MaxBlurPool``) instead of ``MaxPool2d(2)``. ``se``: a squeeze-and-excitation
-    block at the end of each group with this reduction (``methods.FieldSE``, shared over a field; 0: none). ``srf``:
-    every trainable 3x3 kernel stored as structured-receptive-field coefficients (``methods.use_srf``)."""
-    import torch
-    from torch import nn
+    dtype: DTypeLike | None = None,
+    seed: int = 0,
+) -> nnx.Module:
+    """The network (Flax NNX, float32 weights; ``dtype`` the arithmetic's, float32 by default). ``bn_momentum`` is
+    PyTorch's (the weight of the new batch). ``tie`` (method MT5): each group's last convolution applied ``tie`` more
+    times, its weights shared, a batch norm of its own each time (depth at no stored convolution weights). ``flip_eq``
+    (method MT1): the last ``flip_eq`` groups made equivariant to horizontal flips (``methods.FlipConv``: channel pairs,
+    half the free weights of a plain convolution of twice the width), the features pooled over each pair at the end
+    (invariance by construction, not by test-time mirroring). ``eq_group`` 'd4': those groups equivariant to the flips
+    and quarter turns instead (``methods.P4MConv``, fields of 8, 1/8 of the expanded convolution's weights).
+    ``blur_pool``: each group's downsampling anti-aliased (``methods.MaxBlurPool``) instead of a 2x2 max pool. ``se``: a
+    squeeze-and-excitation block at the end of each group with this reduction (``methods.FieldSE``, shared over a field;
+    0: none). ``srf``: every trainable 3x3 kernel stored as structured-receptive-field coefficients
+    (``methods.use_srf``)."""
+    import jax.numpy as jnp
+    from flax import nnx
 
     from . import methods
 
-    class BatchNorm(nn.BatchNorm2d):
-        def __init__(self, c):
-            super().__init__(c, eps=1e-12, momentum=bn_momentum)
-            self.weight.requires_grad = False
-
-    class Conv(nn.Conv2d):
-        def __init__(self, cin, cout, k=3, padding='same', bias=False):
-            super().__init__(cin, cout, kernel_size=k, padding=padding, bias=bias)
-
-        def reset_parameters(self):
-            super().reset_parameters()
-            if self.bias is not None:
-                self.bias.data.zero_()
-            w = self.weight.data
-            torch.nn.init.dirac_(w[: w.size(1)])
-
-    eq_conv = {'d1': methods.FlipConv, 'd4': methods.P4MConv}[eq_group]
-    k = eq_conv.order
-
-    class PairNorm(BatchNorm):  # (one set of statistics for all members of a field)
-        def forward(self, x):
-            n, kc, hh, ww_ = x.shape
-            return super().forward(x.reshape(n * k, kc // k, hh, ww_)).reshape(n, kc, hh, ww_)
-
-    class Group(nn.Module):
-        def __init__(self, cin, cout, eq: str = ''):
-            super().__init__()
-            if eq:  # 'lift' (plain in, pairs out) or 'pair' (pairs in and out)
-                self.conv1, self.norm1 = eq_conv(cin, cout, lift=eq == 'lift'), PairNorm(cout)
-                self.convs = nn.ModuleList(eq_conv(cout, cout) for _ in range(depth - 1))
-                norm = lambda: PairNorm(cout)
-            else:
-                self.conv1, self.norm1 = Conv(cin, cout), BatchNorm(cout)
-                self.convs = nn.ModuleList(Conv(cout, cout) for _ in range(depth - 1))
-                norm = lambda: BatchNorm(cout)
-            self.pool = methods.MaxBlurPool() if blur_pool else nn.MaxPool2d(2)
-            self.se = methods.FieldSE(cout, k if eq else 1, se) if se else None
-            self.norms = nn.ModuleList(norm() for _ in range(depth - 1 + (tie if depth > 1 else 0)))
-            self.activ = nn.GELU()
-
-        def forward(self, x):
-            x = self.activ(self.norm1(self.pool(self.conv1(x))))
-            x0 = x
-            convs = list(self.convs) + ([self.convs[-1]] * tie if len(self.convs) else [])
-            for i, (conv, norm) in enumerate(zip(convs, self.norms, strict=False)):
-                x = norm(conv(x))
-                if depth >= 3 and i == len(convs) - 1:
-                    x = x + x0  # (depth 3: the residual over the last two)
-                x = self.activ(x)
-            return self.se(x) if self.se is not None else x
-
-    class Mul(nn.Module):
-        def __init__(self, s):
-            super().__init__()
-            self.s = s
-
-        def forward(self, x):
-            return x * self.s
-
-    ww = 2 * 3 * whiten_kernel**2
-    w1, w2, w3 = widths
-    eqs = [''] * (3 - flip_eq) + (['lift'] + ['pair'] * (flip_eq - 1) if flip_eq else [])
-    pool = [methods.GroupMaxPool(k)] if flip_eq else [nn.MaxPool2d(3), nn.Flatten()]
-    net = nn.Sequential(
-        Conv(3, ww, whiten_kernel, padding=0, bias=True),
-        nn.GELU(),
-        Group(ww, w1, eqs[0]),
-        Group(w1, w2, eqs[1]),
-        Group(w2, w3, eqs[2]),
-        *pool,
-        nn.Linear(w3, classes, bias=False),
-        Mul(scaling_factor),
+    cfg = dict(
+        widths=tuple(int(w) for w in widths),
+        depth=int(depth),
+        scaling_factor=scaling_factor,
+        bn_momentum=bn_momentum,
+        whiten_kernel=int(whiten_kernel),
+        classes=classes,
+        tie=int(tie),
+        flip_eq=int(flip_eq),
+        eq_group=eq_group,
+        blur_pool=bool(blur_pool),
+        se=int(se),
+        dtype=dtype or jnp.float32,
     )
-    net[0].weight.requires_grad = False
+    net = _modules()['Airbench'](cfg, rngs=nnx.Rngs(params=seed))
     if srf:
         methods.use_srf(net)
     return net
 
 
-def build(h: dict):
-    """The network ``h`` describes (fp32), and its whitening convolution (or None): ``arch='airbench'`` is ``model``,
-    any other a builder of ``cifarq.nets`` with ``arch_kw``."""
-    if h.get('arch', 'airbench') == 'airbench':
-        net = model(
-            tuple(h['widths']),
-            h['depth'],
-            h['scaling_factor'],
-            h['bn_momentum'],
-            h['whiten_kernel'],
-            tie=int(h.get('tie', 0)),
-            flip_eq=int(h.get('flip_eq', 0)),
-            eq_group=h.get('eq_group', 'd1'),
-            blur_pool=bool(h.get('blur_pool', False)),
-            se=int(h.get('se', 0)),
-            srf=bool(h.get('srf', False)),
-        )
-        return net, net[0]
-    from . import nets
+def build(h: dict, dtype: DTypeLike | None = None, abstract: bool = False) -> tuple[nnx.Module, nnx.Module | None]:
+    """The network ``h`` describes, and its whitening convolution (or None): ``arch='airbench'`` is ``model``, any
+    other a builder of ``cifarq.nets`` with ``arch_kw``. ``abstract``: shapes only, no arrays (``nnx.eval_shape``: for
+    counting parameters and MACs of a large network cheaply)."""
+    from flax import nnx
 
-    net = nets.build(h['arch'], **h.get('arch_kw', {}))
-    for m in net.modules():
-        if isinstance(m, nn_batchnorm()):
-            m.momentum = h['bn_momentum']
-    return net, net.whiten
+    def make() -> nnx.Module:
+        if h.get('arch', 'airbench') == 'airbench':
+            return model(
+                tuple(h['widths']),
+                h['depth'],
+                h['scaling_factor'],
+                h['bn_momentum'],
+                h['whiten_kernel'],
+                tie=int(h.get('tie', 0)),
+                flip_eq=int(h.get('flip_eq', 0)),
+                eq_group=h.get('eq_group', 'd1'),
+                blur_pool=bool(h.get('blur_pool', False)),
+                se=int(h.get('se', 0)),
+                srf=bool(h.get('srf', False)),
+                dtype=dtype,
+                seed=int(h.get('seed', 0)),
+            )
+        from . import nets
 
+        net = nets.build(h['arch'], dtype=dtype, seed=int(h.get('seed', 0)), **h.get('arch_kw', {}))
+        for _, node in nnx.iter_graph(net):
+            if isinstance(node, nnx.BatchNorm):
+                node.momentum = 1 - h['bn_momentum']
+        return net
 
-def nn_batchnorm():
-    import torch
-
-    return (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d)
-
-
-def whiten_init(layer, x, eps: float):
-    """Set the whitening convolution from normalised images ``x`` (N, 3, 32, 32)."""
-    import torch
-
-    c, (h, w) = x.shape[1], layer.weight.shape[2:]
-    patches = x.unfold(2, h, 1).unfold(3, w, 1).transpose(1, 3).reshape(-1, c, h, w).float()
-    flat = patches.view(len(patches), -1)
-    vals, vecs = torch.linalg.eigh(flat.T @ flat / len(flat), UPLO='U')
-    vals, vecs = vals.flip(0).view(-1, 1, 1, 1), vecs.T.reshape(c * h * w, c, h, w).flip(0)
-    scaled = vecs / torch.sqrt(vals + eps)
-    layer.weight.data[:] = torch.cat((scaled, -scaled)).to(layer.weight.dtype)
+    net = nnx.eval_shape(make) if abstract else make()
+    return net, getattr(net, 'whiten', None)
 
 
-def tta_logits(net, x, level: int):
-    """Logits of normalised images ``x`` averaged over ``level``'s views (0: 1 view, 1: 2, 2: 6; 3: 18, every shift of
-    -2, 0 or 2 pixels each way, mirrored: the session's P2, inference compute being uncapped)."""
-    import torch.nn.functional as F
+def _path(path: Sequence[Any]) -> tuple:
+    out = []
+    for p in path:
+        if hasattr(p, 'key'):
+            out.append(p.key)
+        elif hasattr(p, 'idx'):
+            out.append(p.idx)
+        elif getattr(p, 'name', None) != 'value':
+            out.append(p.name)
+    return tuple(out)
 
-    mirror = lambda v: 0.5 * net(v) + 0.5 * net(v.flip(-1))
+
+def labels(net: nnx.Module, params: nnx.State, bn_scale: bool = False) -> Any:
+    """Each parameter's group, a tree like ``params``: 'bias' (batch-norm biases), 'frozen' (batch-norm scales unless
+    ``bn_scale``; the whitening weight), 'whiten_b' (the whitening bias), 'filter' (other 4-d kernels), 'other'."""
+    import jax
+    from flax import nnx
+
+    bn, whiten = set(), set()
+    for path, node in nnx.iter_graph(net):
+        if isinstance(node, nnx.BatchNorm):
+            bn.add(tuple(path))
+    w = getattr(net, 'whiten', None)
+    if w is not None:
+        whiten.add(('whiten',))
+
+    def one(path: Sequence[Any], leaf: jax.Array) -> str:
+        p = _path(path)
+        parent, name = p[:-1], p[-1]
+        if parent in bn:
+            return 'bias' if name == 'bias' else ('other' if bn_scale else 'frozen')
+        if parent in whiten:
+            return 'whiten_b' if name == 'bias' else 'frozen'
+        return 'filter' if leaf.ndim == 4 else 'other'
+
+    return jax.tree_util.tree_map_with_path(one, params)
+
+
+def param_counts(net: nnx.Module, bn_scale: bool = False) -> dict:
+    """{'stored': every parameter array's size, frozen ones included; 'trainable': those training updates} (batch-norm
+    running statistics are not counted; batch norm's frozen scale is a parameter and is counted)."""
+    import jax
+    from flax import nnx
+
+    from . import jx
+
+    params = nnx.state(net, nnx.Param)
+    lab = labels(net, params, bn_scale)
+    sizes = jax.tree.map(lambda a: int(math.prod(a.shape)), params)
+    stored = sum(jax.tree.leaves(sizes)) + jx.count(nnx.state(net, jx.Frozen))
+    frozen = sum(s for s, l in zip(jax.tree.leaves(sizes), jax.tree.leaves(lab), strict=True) if l == 'frozen')
+    return {'stored': stored, 'trainable': stored - frozen}
+
+
+def whiten_init(layer: nnx.Module, x: NPArrayLike, eps: float) -> None:
+    """Set the whitening convolution from normalised images ``x`` (N, 32, 32, 3): the eigenvectors of their patches'
+    covariance, largest first, over the square roots of their eigenvalues (plus ``eps``), and their negatives."""
+    import jax.numpy as jnp
+    import numpy as np
+    from flax import nnx
+
+    from . import jx
+
+    k = layer.weight.shape[0]
+    p = jx.patches(np.asarray(x, np.float64), k)
+    vals, vecs = np.linalg.eigh(p.T @ p / len(p))
+    vals, vecs = vals[::-1], vecs[:, ::-1]
+    filt = (vecs.T / np.sqrt(vals + eps)[:, None]).reshape(-1, k, k, x.shape[-1])  # (O, kh, kw, C)
+    filt = np.concatenate([filt, -filt])
+    layer.weight = nnx.Param(jnp.asarray(np.transpose(filt, (1, 2, 3, 0)), jnp.float32))
+
+
+def tta_logits(apply: Callable[[jax.Array], jax.Array], x: jax.Array, level: int) -> jax.Array:
+    """Logits of normalised images ``x`` (NHWC) through ``apply`` averaged over ``level``'s views (0: 1 view, 1: 2,
+    2: 6; 3: 18, every shift of -2, 0 or 2 pixels each way, mirrored: the session's P2, inference compute being
+    uncapped)."""
+    import jax.numpy as jnp
+
+    mirror = lambda v: 0.5 * apply(v) + 0.5 * apply(v[:, :, ::-1])
     if level == 0:
-        return net(x)
+        return apply(x)
     if level == 1:
         return mirror(x)
     if level >= 3:
-        padded = F.pad(x, (2,) * 4, 'reflect')
-        return sum(mirror(padded[:, :, dy : dy + 32, dx : dx + 32]) for dy in (0, 2, 4) for dx in (0, 2, 4)) / 9
-    padded = F.pad(x, (1,) * 4, 'reflect')
-    shifted = 0.5 * (mirror(padded[:, :, 0:32, 0:32]) + mirror(padded[:, :, 2:34, 2:34]))
+        padded = jnp.pad(x, ((0, 0), (2, 2), (2, 2), (0, 0)), mode='reflect')
+        return sum(mirror(padded[:, dy : dy + 32, dx : dx + 32]) for dy in (0, 2, 4) for dx in (0, 2, 4)) / 9
+    padded = jnp.pad(x, ((0, 0), (1, 1), (1, 1), (0, 0)), mode='reflect')
+    shifted = 0.5 * (mirror(padded[:, 0:32, 0:32]) + mirror(padded[:, 2:34, 2:34]))
     return 0.5 * mirror(x) + 0.5 * shifted
 
 
-def _crop(images, size: int):
+def _crop(key: jax.Array, images: jax.Array, size: int) -> jax.Array:
     """Random translations: crops of ``size`` from reflect-padded images, one shift per image (airbench's)."""
-    import torch
+    import jax
 
-    r = (images.size(-1) - size) // 2
-    shifts = torch.randint(-r, r + 1, size=(len(images), 2), device=images.device)
-    out = torch.empty((len(images), 3, size, size), device=images.device, dtype=images.dtype)
-    if r <= 2:
-        for sy in range(-r, r + 1):
-            for sx in range(-r, r + 1):
-                m = (shifts[:, 0] == sy) & (shifts[:, 1] == sx)
-                out[m] = images[m, :, r + sy : r + sy + size, r + sx : r + sx + size]
-    else:
-        tmp = torch.empty((len(images), 3, size, size + 2 * r), device=images.device, dtype=images.dtype)
-        for s in range(-r, r + 1):
-            m = shifts[:, 0] == s
-            tmp[m] = images[m, :, r + s : r + s + size, :]
-        for s in range(-r, r + 1):
-            m = shifts[:, 1] == s
-            out[m] = tmp[m, :, :, r + s : r + s + size]
-    return out
+    r = (images.shape[1] - size) // 2
+    shifts = jax.random.randint(key, (len(images), 2), -r, r + 1)
+    one = lambda img, s: jax.lax.dynamic_slice(img, (r + s[0], r + s[1], 0), (size, size, img.shape[-1]))
+    return jax.vmap(one)(images, shifts)
 
 
-def _cutout(images, size: int):
-    import torch
+def _cutout(key: jax.Array, images: jax.Array, size: int) -> jax.Array:
+    import jax
+    import jax.numpy as jnp
 
-    n, _, h, w = images.shape
-    cy = torch.randint(0, h - size + 1, size=(n,), device=images.device)
-    cx = torch.randint(0, w - size + 1, size=(n,), device=images.device)
-    dy = torch.arange(h, device=images.device).view(1, 1, h, 1) - cy.view(-1, 1, 1, 1)
-    dx = torch.arange(w, device=images.device).view(1, 1, 1, w) - cx.view(-1, 1, 1, 1)
-    return images.masked_fill((dy >= 0) & (dy < size) & (dx >= 0) & (dx < size), 0)
-
-
-def param_counts(net) -> dict:
-    """{'stored': every parameter tensor's size, frozen ones included; 'trainable': those with gradients} (batch-norm
-    running statistics are buffers, not counted; batch norm's frozen scale is a parameter and is counted)."""
-    return {'stored': sum(p.numel() for p in net.parameters()), 'trainable': sum(p.numel() for p in net.parameters() if p.requires_grad)}
+    n, h, w, _ = images.shape
+    ky, kx = jax.random.split(key)
+    cy, cx = jax.random.randint(ky, (n,), 0, h - size + 1), jax.random.randint(kx, (n,), 0, w - size + 1)
+    dy = jnp.arange(h)[None, :, None] - cy[:, None, None]
+    dx = jnp.arange(w)[None, None, :] - cx[:, None, None]
+    box = (dy >= 0) & (dy < size) & (dx >= 0) & (dx < size)
+    return jnp.where(box[..., None], 0, images).astype(images.dtype)
 
 
-def _groups(net, whiten, bn_scale: bool):
-    """(batch-norm biases, every other parameter training updates): batch norm's scale is frozen unless ``bn_scale``
-    (then it trains with the others), the whitening weight is frozen and its bias trains (until switched off)."""
-    biases, others, seen = [], [], set()
-    for m in net.modules():
-        if isinstance(m, nn_batchnorm()):
-            m.weight.requires_grad = bn_scale
-            biases.append(m.bias)
-            if bn_scale:
-                others.append(m.weight)
-            seen |= {id(m.weight), id(m.bias)}
-    for p in net.parameters():
-        if id(p) not in seen and (p.requires_grad or (whiten is not None and p is whiten.bias)):
-            others.append(p)
-    return biases, others
-
-
-def train(data: str | None = None, save: str | None = None, report=None, device: str = 'auto', **hyperparameters) -> dict:
-    """Train one airbench network with ``DEFAULTS`` updated by ``hyperparameters`` (an unknown name is an error); the
-    same contract as ``cifarq.train.train``: validation and test accuracy (``test_acc`` at ``tta_level``, and without
-    TTA beside it), time, throughput, per-epoch history, the parameter counts; ``report`` early stopping after each
-    epoch; ``save`` a directory for ``load``."""
-    import numpy as np
-    import torch
-    import torch.nn.functional as F
-
-    from .data import dataset
-
+def _check(hyperparameters: dict) -> dict:
     unknown = set(hyperparameters) - set(DEFAULTS)
     if unknown:
         raise TypeError(f'unknown hyperparameters: {sorted(unknown)}')
@@ -359,8 +483,55 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     for k in ('depth', 'batch_size', 'translate', 'cutout', 'tta_level', 'whiten_kernel', 'whiten_bias_epochs', 'seed'):
         h[k] = int(h[k])
     h['epochs'] = float(h['epochs'])
+    return h
+
+
+def _transform(h: dict, hp: dict, bs: int, eps: float) -> dict[str, optax.GradientTransformation]:
+    """The optimiser over ``labels``' groups, without the schedule (``train`` multiplies the updates by the schedule's
+    factor at each step). ``hp`` may be traced."""
+    import optax
+
+    from . import methods
+
+    frozen = optax.set_to_zero()
+    if h['optimizer'] in ('sgd', 'muon'):
+        mu = hp['momentum']
+        kilostep = 1024 * (1 + 1 / (1 - mu))
+        lr, wd = hp['lr'] / kilostep, hp['weight_decay'] * bs / kilostep
+        lr_b = lr * hp['bias_scaler']
+        sgd = lambda lr_g: optax.chain(optax.add_decayed_weights(wd / lr_g), optax.trace(decay=mu, nesterov=True), optax.scale(-lr_g))
+        groups = {'bias': sgd(lr_b), 'other': sgd(lr), 'whiten_b': sgd(lr), 'filter': sgd(lr), 'frozen': frozen}
+        if h['optimizer'] == 'muon':  # (O4: Muon for the filters, the SGD above for the rest)
+            groups['filter'] = methods.MuonSGD(hp['muon_lr'], hp['muon_momentum'])
+        return groups
+    if h['optimizer'] == 'adamw':  # (lr and weight_decay as AdamW's own; the loss a batch mean)
+        adam = lambda wd: optax.chain(
+            optax.scale_by_adam(b1=hp['momentum'], b2=hp['beta2'], eps=eps), optax.add_decayed_weights(wd), optax.scale(-hp['lr'])
+        )
+        return {
+            'bias': adam(0.0),
+            'other': adam(hp['weight_decay']),
+            'whiten_b': adam(hp['weight_decay']),
+            'filter': adam(hp['weight_decay']),
+            'frozen': frozen,
+        }
+    raise ValueError(f"optimizer: 'sgd', 'adamw' or 'muon', not {h['optimizer']!r}")
+
+
+def _floating(a: Any) -> bool:
+    import jax.numpy as jnp
+
+    return hasattr(a, 'dtype') and jnp.issubdtype(a.dtype, jnp.floating)
+
+
+def train(data: str | None = None, save: str | None = None, report: Any = None, device: str = 'auto', **hyperparameters) -> dict:
+    """Train one airbench network with ``DEFAULTS`` updated by ``hyperparameters`` (an unknown name is an error); the
+    same contract as ``cifarq.train.train``: validation and test accuracy (``test_acc`` at ``tta_level``, and without
+    TTA beside it), time, throughput, per-epoch history, the parameter counts; ``report`` early stopping after each
+    epoch; ``save`` a directory for ``load``."""
+    h = _check(hyperparameters)
     if h['param_cap']:  # over the cap: pruned before any work (the search's bound)
-        stored = param_counts(build(h)[0])['stored']
+        stored = param_counts(build(h, abstract=True)[0])['stored']
         if stored > h['param_cap']:
             return {
                 'val_acc': 0.0,
@@ -370,36 +541,53 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
                 'params': stored,
                 'hyperparameters': {**h, 'widths': list(h['widths'])},
             }
-    torch.manual_seed(h['seed'])
-    np.random.seed(h['seed'])
-    dev = torch.device(('cuda' if torch.cuda.is_available() else 'cpu') if device == 'auto' else device)
-    torch.backends.cudnn.benchmark = True
-    dtype = torch.float16 if h['precision'] == 'fp16' and dev.type == 'cuda' else torch.float32
-    # 'amp': fp32 weights (the optimiser's state too), the arithmetic under bf16 autocast: for AdamW and for networks
-    # whose fp16 activations overflow; 'fp16' is airbench's own (fp16 weights, batch norm fp32); 'fp32' neither
-    import contextlib
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+    import optax
 
-    amp = (lambda: torch.autocast(dev.type, dtype=torch.bfloat16)) if h['precision'] == 'amp' else contextlib.nullcontext
+    from . import jx
+    from .data import dataset
+
+    jx.cache()
+    dev = jx.pick(device)
+    dtype = _compute_dtype(h, device)
+    with jax.default_device(dev):
+        return _train(h, data, save, report, device, dev, dtype, jax, jnp, np, optax, jx, dataset)
+
+
+def _train(
+    h: dict,
+    data: str | None,
+    save: str | None,
+    report: Any,
+    device: str,
+    dev: jax.Device,
+    dtype: DTypeLike,
+    jax: ModuleType,
+    jnp: ModuleType,
+    np: ModuleType,
+    optax: ModuleType,
+    jx: ModuleType,
+    dataset: ModuleType,
+) -> dict:
+    from flax import nnx
 
     arrays = dataset.load(data)
-    gpu = lambda a: torch.from_numpy(np.ascontiguousarray(a)).to(dev)
-    mean, std = torch.tensor(MEAN, device=dev).view(1, 3, 1, 1), torch.tensor(STD, device=dev).view(1, 3, 1, 1)
-    images = lambda a: ((gpu(a).permute(0, 3, 1, 2).to(dtype) / 255 - mean.to(dtype)) / std.to(dtype)).contiguous(memory_format=torch.channels_last)
-    x_train, y_train = images(arrays['x_train']), gpu(arrays['y_train']).long()
-    x_val, y_val = images(arrays['x_val']), gpu(arrays['y_val']).long()
-    x_test, y_test = images(arrays['x_test']), gpu(arrays['y_test']).long()
+    mean_, std_ = np.asarray(MEAN, np.float32), np.asarray(STD, np.float32)
+    images = lambda a: (np.asarray(a, np.float32) / 255 - mean_) / std_
+    x_train, y_train = images(arrays['x_train']), np.asarray(arrays['y_train'], np.int32)
+    x_val, y_val = images(arrays['x_val']), np.asarray(arrays['y_val'])
+    x_test, y_test = images(arrays['x_test']), np.asarray(arrays['y_test'])
     if h['train_on'] == 'train+val':
-        x_train, y_train = torch.cat([x_train, x_val]), torch.cat([y_train, y_val])
+        x_train, y_train = np.concatenate([x_train, x_val]), np.concatenate([y_train, y_val.astype(np.int32)])
     elif h['train_on'] != 'train':
         raise ValueError(f"train_on: 'train' or 'train+val', not {h['train_on']!r}")
+    classes = len(arrays['classes'])
 
-    net, whiten = build(h)
-    biases, others = _groups(net, whiten, h['bn_scale'])
-    counts = param_counts(net)
-    net = net.to(dev).to(dtype).to(memory_format=torch.channels_last)
-    for m in net.modules():
-        if isinstance(m, nn_batchnorm()):
-            m.float()
+    net, whiten = build(h, dtype)
+    counts = param_counts(net, h['bn_scale'])
+    sgd_like = h['optimizer'] in ('sgd', 'muon')
     proxy, proxy_info = None, {}
     if h['filter_keep'] < 1:
         # D1, data filtering (airbench96_faster's idea, with a proxy trained first and then fixed): a small network
@@ -418,95 +606,26 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
                 batch_size=h['batch_size'],
                 tta_level=0,
                 test='sealed',
+                precision=h['precision'],
                 seed=h['seed'] + 10_000,
             )
-            proxy, _ = load(tmp, device=dev)
-        proxy = proxy.to(dtype).to(memory_format=torch.channels_last).eval()
-        for m in proxy.modules():
-            if isinstance(m, nn_batchnorm()):
-                m.float()
+            pnet, _ = load(tmp, dtype=dtype)
+        pS = jx.Split(pnet)
+        proxy = (pS, pS.params, pS.rest)
         proxy_info = {'proxy': {'params': pr['params'], 'val_acc_notta': pr['val_acc_notta'], 'epochs': pr['epochs_charged']}}
     teachers = []
     if h['kd_teacher'] and h['kd_weight'] > 0:
         # one directory, or several separated by commas: an ensemble, its softened predictions averaged
         for d in str(h['kd_teacher']).split(','):
-            t, _ = load(d.strip(), device=dev)
-            # (the student's precision: on a GPU at fp16 the batches are fp16, which fp32 weights refuse)
-            t = t.to(dtype).to(memory_format=torch.channels_last).eval()
-            for m in t.modules():
-                if isinstance(m, nn_batchnorm()):
-                    m.float()
-            teachers.append(t)
+            tnet, _ = load(d.strip(), dtype=dtype)
+            tS = jx.Split(tnet)
+            teachers.append((tS, tS.params, tS.rest))
 
     bs, n = h['batch_size'], len(y_train)
     steps_per_epoch = n // bs
     total = math.ceil(steps_per_epoch * h['epochs'])
-    kilostep = 1024 * (1 + 1 / (1 - h['momentum']))
-    lr, wd = h['lr'] / kilostep, h['weight_decay'] * bs / kilostep
-    lr_b = lr * h['bias_scaler']
-    if h['optimizer'] == 'sgd':
-        opt = torch.optim.SGD(
-            [dict(params=biases, lr=lr_b, weight_decay=wd / lr_b), dict(params=others, lr=lr, weight_decay=wd / lr)],
-            momentum=h['momentum'],
-            nesterov=True,
-        )
-    elif h['optimizer'] == 'adamw':  # (lr and weight_decay as AdamW's own; the loss a batch mean)
-        opt = torch.optim.AdamW(
-            [dict(params=biases, lr=h['lr'], weight_decay=0.0), dict(params=others, lr=h['lr'], weight_decay=h['weight_decay'])],
-            betas=(h['momentum'], h['beta2']),
-            eps=1e-6 if dtype == torch.float16 else 1e-8,
-        )
-    elif h['optimizer'] == 'muon':  # (O4: Muon for the filters, the SGD above for the rest)
-        from .methods import MuonSGD
-
-        filters = [p for p in others if p.dim() == 4]
-        rest = [p for p in others if p.dim() != 4]
-        opt = MuonSGD(
-            [
-                dict(params=biases, lr=lr_b, weight_decay=wd / lr_b),
-                dict(params=rest, lr=lr, weight_decay=wd / lr),
-                dict(params=filters, lr=h['muon_lr'], muon=True),
-            ],
-            momentum=h['momentum'],
-            muon_momentum=h['muon_momentum'],
-        )
-    else:
-        raise ValueError(f"optimizer: 'sgd', 'adamw' or 'muon', not {h['optimizer']!r}")
-    warm = int(total * h['warmup_frac'])
-
-    def lr_factor(step):
-        if step < warm:
-            f = step / warm
-            return 0.2 * (1 - f) + f
-        f = (step - warm) / max(1, total - warm)
-        return (1 - f) + h['final_lr_frac'] * f
-
-    sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_factor)
-    alpha = 0.95**5 * (torch.arange(total + 1) / total) ** 3
-    ahead = {k: v.clone() for k, v in net.state_dict().items()} if h['lookahead'] else None
-
-    def lookahead(decay):
-        for (_k, a), v in zip(ahead.items(), net.state_dict().values(), strict=False):
-            if v.dtype in (torch.half, torch.float, torch.bfloat16):
-                a.lerp_(v, 1 - decay)
-                v.copy_(a)
-
-    loss_fn = torch.nn.CrossEntropyLoss(label_smoothing=h['label_smoothing'], reduction='none')
-
-    def accuracy(x, y, level, gate: float = 0.0):
-        """(accuracy at ``level``'s views, the share of images given them: 1 unless MT6's ``gate`` is set)."""
-        from .methods import gated_logits
-
-        net.eval()
-        with torch.no_grad(), amp():
-            if gate > 0 and level > 0:
-                parts = [gated_logits(net, xb, level, gate, tta_logits) for xb in x.split(2000)]
-                logits = torch.cat([p_[0] for p_ in parts])
-                share = sum(p_[1] * len(xb) for p_, xb in zip(parts, x.split(2000), strict=False)) / len(x)
-            else:
-                logits, share = torch.cat([tta_logits(net, xb, level) for xb in x.split(2000)]), 1.0 if level else 0.0
-        net.train()
-        return (logits.argmax(1) == y).float().mean().item(), share
+    eps = 1e-6 if dtype == jnp.bfloat16 else 1e-8
+    hp = jx.dynamic(h, DYNAMIC)
 
     if report is None:
         stop_here = lambda step, value: False
@@ -517,80 +636,181 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
 
         stop_here = reporter(report)
 
-    if dev.type == 'cuda':
-        torch.cuda.synchronize()
     t0 = time.time()
     if whiten is not None:
         whiten_init(whiten, x_train[:5000], h['whiten_eps'])
     if h['pca_init']:  # (MT3)
         from .methods import pca_init
 
-        pca_init(net, x_train[:2048])
+        pca_init(net, x_train[:2048], seed=h['seed'])
+    S = jx.Split(net)
+    lab = labels(net, S.params, h['bn_scale'])
+    is_wb = jax.tree.map(lambda l: l == 'whiten_b', lab)
+    label_fn = lambda params: lab
+    tx0 = optax.multi_transform(_transform(h, hp, bs, eps), label_fn)
+
+    x_dev = jax.device_put(jnp.asarray(x_train, dtype), dev)
+    y_dev = jax.device_put(jnp.asarray(y_train), dev)
+    key = jax.random.key(h['seed'])
+    key, kflip = jax.random.split(key)
     # alternating flip: each image flipped at random once, then all together every other epoch; translation from
     # reflect padding done once
-    base = torch.where((torch.rand(n, device=dev) < 0.5).view(-1, 1, 1, 1), x_train.flip(-1), x_train) if h['flip'] else x_train
-    padded = F.pad(base, (h['translate'],) * 4, 'reflect') if h['translate'] > 0 else None
-    st = {'step': 0, 'history': [], 'pruned': False}
+    if h['flip']:
+        base = jnp.where((jax.random.uniform(kflip, (n,)) < 0.5)[:, None, None, None], x_dev[:, :, ::-1], x_dev)
+    else:
+        base = x_dev
+    tr = h['translate']
+    padded = jnp.pad(base, ((0, 0), (tr, tr), (tr, tr), (0, 0)), mode='reflect') if tr > 0 else None
+    mean_j, std_j = jnp.asarray(mean_), jnp.asarray(std_)
 
-    def batch_loss(xb, yb):
+    src = padded if padded is not None else base
+
+    @jax.jit
+    def make_epoch(key: jax.Array, src: jax.Array) -> tuple[jax.Array, jax.Array]:
+        kc, kq = jax.random.split(key)
+        ep = _crop(kc, src, 32) if tr > 0 else src
+        return ep, kq
+
+    @jax.jit
+    def finish_epoch(ep: jax.Array, key: jax.Array, epoch: jax.Array) -> jax.Array:
+        if h['flip']:
+            ep = jnp.where(epoch % 2 == 1, ep[:, :, ::-1], ep)
+        if h['cutout'] > 0:
+            ep = _cutout(key, ep, h['cutout'])
+        return ep
+
+    def epoch_images(key: jax.Array, epoch: jax.Array) -> jax.Array:
+        ep, kq = make_epoch(key, src)
+        kp, kcut = jax.random.split(kq)
+        if h['augment'] != 'none':
+            from .augment import apply as augment_policy
+
+            ep = augment_policy(kp, ep, h['augment'], h['augment_m'], mean_j, std_j).astype(dtype)
+        return finish_epoch(ep, kcut, epoch)
+
+    keep = max(1, int(round(h['filter_keep'] * bs))) if proxy is not None else bs
+
+    def factor(step: jax.Array, hp: dict) -> jax.Array:
+        warm = jnp.floor(total * hp['warmup_frac'])
+        s = step.astype(jnp.float32)
+        f_up = s / jnp.maximum(warm, 1.0)
+        f_down = (s - warm) / jnp.maximum(1.0, total - warm)
+        return jnp.where(s < warm, 0.2 * (1 - f_up) + f_up, (1 - f_down) + hp['final_lr_frac'] * f_down)
+
+    def per_example(logits: jax.Array, y: jax.Array, hp: dict) -> jax.Array:
+        target = jax.nn.one_hot(y, classes) * (1 - hp['label_smoothing']) + hp['label_smoothing'] / classes
+        return optax.softmax_cross_entropy(logits.astype(jnp.float32), target)
+
+    def real_step(carry: dict, xb: jax.Array, yb: jax.Array, hp: dict, aux: dict, wb_on: jax.Array) -> tuple[dict, jax.Array]:
+        params, rest, opt, step = carry['params'], carry['rest'], carry['opt'], carry['step']
         if proxy is not None:
-            with torch.no_grad():
-                hard = loss_fn(proxy(xb), yb).float()
-            keep = hard.topk(max(1, int(round(h['filter_keep'] * len(yb))))).indices
-            xb, yb = xb[keep], yb[keep]
-        with amp():
-            out = net(xb)
-        per = loss_fn(out.float() if h['precision'] == 'amp' else out, yb)  # (fp16: airbench's own, in fp16)
-        if teachers:
-            with torch.no_grad(), amp():
-                soft = sum(F.softmax(t(xb).float() / h['kd_temp'], 1) for t in teachers) / len(teachers)
-            logp = F.log_softmax(out.float() / h['kd_temp'], 1)
-            kl = (soft * (soft.clamp_min(1e-8).log() - logp)).sum(1) * h['kd_temp'] ** 2
-            per = (1 - h['kd_weight']) * per.float() + h['kd_weight'] * kl
-            if h['kd_weighting'] != 'none':  # (MT4)
+            pS, pp, pr = aux['proxy']
+            hard = per_example(pS.apply(pp, pr, xb, train=False)[0], yb, hp)
+            idx = jax.lax.top_k(hard, keep)[1]
+            xb, yb = xb[idx], yb[idx]
+
+        def loss_fn(p: Any, r: Any) -> tuple[jax.Array, Any]:
+            out, r2 = S.apply(p, r, xb, train=True)
+            per = per_example(out, yb, hp)
+            if teachers:
                 from .methods import kd_weights
 
-                per = per * kd_weights(kl, h['kd_weighting'])
-        return per.sum() if h['optimizer'] in ('sgd', 'muon') else per.mean()
+                T = hp['kd_temp']
+                soft = sum(jax.nn.softmax(tS.apply(tp, tr_, xb, train=False)[0].astype(jnp.float32) / T, 1) for tS, tp, tr_ in aux['teachers']) / len(
+                    teachers
+                )
+                soft = jax.lax.stop_gradient(soft)
+                logp = jax.nn.log_softmax(out.astype(jnp.float32) / T, 1)
+                kl = (soft * (jnp.log(jnp.maximum(soft, 1e-8)) - logp)).sum(1) * T**2
+                per = (1 - hp['kd_weight']) * per + hp['kd_weight'] * kl
+                if h['kd_weighting'] != 'none':  # (MT4)
+                    per = per * kd_weights(kl, h['kd_weighting'])
+            return (per.sum() if sgd_like else per.mean()), r2
 
-    def run(epochs):
-        """Train over ``epochs`` (a range of epoch indices) of the schedule; False when the run should stop."""
+        (loss, rest), grads = jax.value_and_grad(loss_fn, has_aux=True)(params, rest)
+        tx = optax.multi_transform(_transform(h, hp, bs, eps), label_fn)
+        updates, opt = tx.update(grads, opt, params)
+        f = factor(step, hp)
+        updates = jax.tree.map(lambda u, w: u * f * (wb_on if w else 1.0), updates, is_wb)
+        params = optax.apply_updates(params, updates)
+        step = step + 1
+        new = {'params': params, 'rest': rest, 'opt': opt, 'step': step}
+        if h['lookahead']:
+            ahead = carry['ahead']
+            decay = 0.95**5 * (step.astype(jnp.float32) / total) ** 3
+            on = (step % 5) == 0
+            cur = (params, rest)
+            ahead2 = jax.tree.map(lambda a, v: jnp.where(on, a + (1 - decay) * (v - a), a) if _floating(v) else a, ahead, cur)
+            cur = jax.tree.map(lambda a, v: jnp.where(on | (step >= total), a, v) if _floating(v) else v, ahead2, cur)
+            new.update(params=cur[0], rest=cur[1], ahead=ahead2)
+        return new, loss
+
+    def scan_epoch(
+        carry: dict, ep: jax.Array, y: jax.Array, perm: jax.Array, hp: dict, arr: dict, wb_on: jax.Array
+    ) -> tuple[dict, tuple[jax.Array, jax.Array]]:
+        aux = {
+            'proxy': (proxy[0], *arr['proxy']) if proxy else None,
+            'teachers': [(t[0], *ta) for t, ta in zip(teachers, arr['teachers'], strict=True)],
+        }
+
+        def body(c: dict, idx: jax.Array) -> tuple[dict, tuple[jax.Array, jax.Array]]:
+            active = c['step'] < total
+            new, loss = jax.lax.cond(active, lambda: real_step(c, ep[idx], y[idx], hp, aux, wb_on), lambda: (c, jnp.zeros((), jnp.float32)))
+            return new, (loss.astype(jnp.float32), active)
+
+        return jax.lax.scan(body, carry, perm)
+
+    epoch_fn = jax.jit(scan_epoch, donate_argnums=0)
+    aux_arrays = {'proxy': (proxy[1], proxy[2]) if proxy else None, 'teachers': [(t[1], t[2]) for t in teachers]}
+
+    def run_epoch(carry: dict, ep: jax.Array, perm: jax.Array, wb_on: bool) -> tuple[dict, tuple[jax.Array, jax.Array]]:
+        return epoch_fn(carry, ep, y_dev, perm, hp, aux_arrays, jnp.asarray(wb_on, jnp.float32))
+
+    def fwd(params: Any, rest: Any, x: jax.Array, level: int, gate: float) -> tuple[jax.Array, jax.Array]:
+        apply = lambda v: S.apply(params, rest, v, train=False)[0]
+        if gate > 0 and level > 0:
+            from .methods import gated_logits
+
+            return gated_logits(apply, x, level, gate, tta_logits)
+        return tta_logits(apply, x, level), jnp.asarray(1.0 if level else 0.0)
+
+    fwd_jit = jax.jit(fwd, static_argnums=(3, 4))
+
+    def accuracy(carry: dict, x: np.ndarray, y: np.ndarray, level: int, gate: float = 0.0) -> tuple[float, float]:
+        """(accuracy at ``level``'s views, the share of images given them: 1 unless MT6's ``gate`` is set)."""
+        correct, shares, nn_ = 0, 0.0, len(y)
+        for a, b in jx.batches(nn_, 2000):
+            xb = jnp.asarray(x[a:b], dtype)
+            if b - a < 2000 and nn_ > 2000:
+                xb = jnp.concatenate([xb, jnp.zeros((2000 - (b - a), *xb.shape[1:]), xb.dtype)])
+            z, share = fwd_jit(carry['params'], carry['rest'], xb, level, float(gate))
+            z = np.asarray(z)[: b - a]
+            correct += int((z.argmax(1) == np.asarray(y[a:b])).sum())
+            shares += float(share) * (b - a)
+        return correct / nn_, shares / nn_
+
+    carry = {'params': S.params, 'rest': S.rest, 'opt': tx0.init(S.params), 'step': jnp.zeros((), jnp.int32)}
+    if h['lookahead']:
+        # (float arrays copied; the others are never read from it, a placeholder keeps the structure: the carry is donated)
+        carry['ahead'] = jax.tree.map(lambda a: jnp.copy(a) if _floating(a) else jnp.zeros((), jnp.float32), (S.params, S.rest))
+    st = {'history': [], 'pruned': False, 'key': key}
+    n_epochs = math.ceil(h['epochs'])
+
+    def run(carry: dict, epochs: Iterable[int]) -> tuple[dict, bool]:
+        """Train over ``epochs`` (a range of epoch indices) of the schedule; (carry, False when the run should stop)."""
         for epoch in epochs:
-            if whiten is not None and whiten.bias is not None:
-                whiten.bias.requires_grad = epoch < h['whiten_bias_epochs']
-            ep = _crop(padded, 32) if padded is not None else base
-            if h['augment'] != 'none':
-                from .augment import apply as augment_policy
-
-                ep = augment_policy(ep, h['augment'], h['augment_m'], mean, std)
-            if h['flip'] and epoch % 2 == 1:
-                ep = ep.flip(-1)
-            if h['cutout'] > 0:
-                ep = _cutout(ep, h['cutout'])
-            perm = torch.randperm(n, device=dev)
-            net.train()
-            loss_sum = torch.zeros((), device=dev)
-            for i in range(steps_per_epoch):
-                idx = perm[i * bs : (i + 1) * bs]
-                loss = batch_loss(ep[idx], y_train[idx])
-                opt.zero_grad(set_to_none=True)
-                loss.backward()
-                opt.step()
-                sched.step()
-                st['step'] += 1
-                loss_sum += loss.detach()
-                if ahead is not None and st['step'] % 5 == 0:
-                    lookahead(alpha[st['step']].item())
-                if st['step'] >= total:
-                    if ahead is not None:
-                        lookahead(1.0)
-                    break
-            mean_loss = (loss_sum / max(1, i + 1) / (bs if h['optimizer'] in ('sgd', 'muon') else 1)).item()
+            wb_on = whiten is not None and epoch < h['whiten_bias_epochs']
+            st['key'], ke, kp = jax.random.split(st['key'], 3)
+            ep = epoch_images(ke, jnp.asarray(epoch))
+            perm = jax.random.permutation(kp, n)[: steps_per_epoch * bs].reshape(steps_per_epoch, bs)
+            carry, (losses, active) = run_epoch(carry, ep, perm, wb_on)
+            losses, active = np.asarray(losses), np.asarray(active)
+            mean_loss = float(losses[active].sum() / max(1, active.sum()) / (bs if sgd_like else 1))
             st['history'].append(
                 {
                     'epoch': epoch + 1,
                     'loss': round(mean_loss, 4),
-                    'val_acc': round(accuracy(x_val, y_val, 0)[0], 4),
+                    'val_acc': round(accuracy(carry, x_val, y_val, 0)[0], 4),
                     'seconds': round(time.time() - t0, 1),
                 }
             )
@@ -599,74 +819,75 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
                 f'epoch {epoch + 1}/{n_epochs}: loss {mean_loss:.4f} val {st["history"][-1]["val_acc"]:.4f} {st["history"][-1]["seconds"]:.0f} s',
                 flush=True,
             )
+            step = int(carry['step'])
             if not math.isfinite(mean_loss):
-                return False
-            if st['step'] < total and stop_here(round(100 * st['step'] / total), st['history'][-1]['val_acc']):
+                return carry, False
+            if step < total and stop_here(round(100 * step / total), st['history'][-1]['val_acc']):
                 st['pruned'] = True
-                return False
-        return True
+                return carry, False
+        return carry, True
 
-    n_epochs = math.ceil(h['epochs'])
+    def copy(tree: Any) -> Any:
+        """Fresh buffers for every array (random keys too): a copy that outlives the donated carry."""
+
+        def one(a: Any) -> Any:
+            if not hasattr(a, 'dtype'):
+                return a
+            if jax.dtypes.issubdtype(a.dtype, jax.dtypes.prng_key):
+                return jax.random.wrap_key_data(jnp.copy(jax.random.key_data(a)), impl=jax.random.key_impl(a))
+            return jnp.copy(a)
+
+        return jax.tree.map(one, tree)
+
     if h['tails'] > 0:
         # MT2: a trunk over the schedule's first epochs, then ``tails`` continuations over its last ``tail_epochs``,
         # each from the trunk's state with its own augmentation draws, their weights averaged and batch norm's
         # statistics re-estimated; every tail's epochs count against the budget
-        import copy
-
         split = n_epochs - int(h['tail_epochs'])
-        ok = run(range(split))
-        trunk = (
-            copy.deepcopy(net.state_dict()),
-            copy.deepcopy(opt.state_dict()),
-            copy.deepcopy(sched.state_dict()),
-            copy.deepcopy(ahead),
-            st['step'],
-        )
+        carry, ok = run(carry, range(split))
+        trunk = copy(carry)
         finals = []
         for k in range(int(h['tails']) if ok else 0):
-            net.load_state_dict(trunk[0])
-            opt.load_state_dict(trunk[1])
-            sched.load_state_dict(trunk[2])
-            if ahead is not None:
-                ahead.clear()
-                ahead.update(copy.deepcopy(trunk[3]))
-            st['step'] = trunk[4]
-            torch.manual_seed(h['seed'] * 1000 + k + 1)
-            if not run(range(split, n_epochs)):
+            carry = copy(trunk)
+            st['key'] = jax.random.key(h['seed'] * 1000 + k + 1)
+            carry, ok = run(carry, range(split, n_epochs))
+            if not ok:
                 break
-            finals.append(copy.deepcopy(net.state_dict()))
+            finals.append(copy((carry['params'], carry['rest'])))
         if finals:
-            avg = {
-                key: (sum(f[key].float() for f in finals) / len(finals)).to(v.dtype) if v.dtype.is_floating_point else v
-                for key, v in finals[0].items()
-            }
-            net.load_state_dict(avg)
-            bns = [m for m in net.modules() if isinstance(m, nn_batchnorm())]
-            for m in bns:
-                m.reset_running_stats()
-                m.momentum = None  # (a cumulative average over the passes below)
-            with torch.no_grad():
-                net.train()
-                for i in range(0, min(n, 20 * bs), bs):
-                    net(base[i : i + bs])
-            for m in bns:
-                m.momentum = h['bn_momentum']
+            avg = jax.tree.map(lambda *v: sum(v) / len(v) if _floating(v[0]) else v[0], *finals)
+            params, rest = avg
+            # batch norm's statistics as a cumulative average over 20 training batches (Torch's momentum None): each
+            # pass at momentum 0 gives its batch's statistics, which are then averaged
+            tmp = S.merge(params, rest, train=True)
+            for _, node in nnx.iter_graph(tmp):
+                if isinstance(node, nnx.BatchNorm):
+                    node.momentum = 0.0
+            g0 = nnx.graphdef(tmp)
+
+            @jax.jit
+            def stats(params: Any, rest: Any, xb: jax.Array) -> Any:
+                m = nnx.merge(g0, params, rest, copy=True)
+                m(xb)
+                return nnx.split(m, nnx.Param, ...)[2]
+
+            passes = [stats(params, rest, base[i : i + bs]) for i in range(0, min(n, 20 * bs), bs)]
+            rest = jax.tree.map(lambda *v: sum(v) / len(v) if _floating(v[0]) else v[0], *passes)
+            carry = {**carry, 'params': params, 'rest': rest}
             st['history'].append(
-                {'epoch': 'tails-averaged', 'val_acc': round(accuracy(x_val, y_val, 0)[0], 4), 'seconds': round(time.time() - t0, 1)}
+                {'epoch': 'tails-averaged', 'val_acc': round(accuracy(carry, x_val, y_val, 0)[0], 4), 'seconds': round(time.time() - t0, 1)}
             )
     else:
-        run(range(n_epochs))
-    step, history, pruned = st['step'], st['history'], st['pruned']
-    if dev.type == 'cuda':
-        torch.cuda.synchronize()
+        carry, _ = run(carry, range(n_epochs))
+    jax.block_until_ready(carry['params'])
+    step, history, pruned = int(carry['step']), st['history'], st['pruned']
     seconds = time.time() - t0
-    name = torch.cuda.get_device_name(dev) if dev.type == 'cuda' else 'cpu'
     charged = h['epochs'] + (max(0, int(h['tails']) - 1) * int(h['tail_epochs']) if h['tails'] else 0)
     charged *= h['filter_keep']  # (filtering: the images back-propagated, PLAN §2.1)
     common = {
         'train_seconds': round(seconds, 1),
         'images_per_s': round(step * bs / seconds),
-        'device': name,
+        'device': jx.device_name(device),
         'params': counts['stored'],
         'params_trainable': counts['trainable'],
         'steps': step,
@@ -677,81 +898,97 @@ def train(data: str | None = None, save: str | None = None, report=None, device:
     }
     if pruned:
         return {'val_acc': history[-1]['val_acc'], 'pruned': True, 'progress': round(100 * step / total), **common}
-    val, val_share = accuracy(x_val, y_val, h['tta_level'], h['tta_gate'])
+    val, val_share = accuracy(carry, x_val, y_val, h['tta_level'], h['tta_gate'])
     views = {0: 1, 1: 2, 2: 6, 3: 18}[h['tta_level']]
     out = {
         'val_acc': round(val, 4),
-        'val_acc_notta': round(accuracy(x_val, y_val, 0)[0], 4),
+        'val_acc_notta': round(accuracy(carry, x_val, y_val, 0)[0], 4),
         # (1, 2 and 6 views of the same network: the equivariance-vs-TTA comparisons, PLAN §5.1)
-        'val_acc_by_views': {v: round(accuracy(x_val, y_val, lv)[0], 4) for lv, v in ((0, 1), (1, 2), (2, 6))},
+        'val_acc_by_views': {v: round(accuracy(carry, x_val, y_val, lv)[0], 4) for lv, v in ((0, 1), (1, 2), (2, 6))},
     }
     if h['test'] == 'sealed':
         # (session 2026-10-30-equivariant-small: the test set is not evaluated during the session; final models only)
         share = val_share
     else:
-        test, share = accuracy(x_test, y_test, h['tta_level'], h['tta_gate'])
-        out.update(test_acc=round(test, 4), test_acc_notta=round(accuracy(x_test, y_test, 0)[0], 4))
+        test, share = accuracy(carry, x_test, y_test, h['tta_level'], h['tta_gate'])
+        out.update(test_acc=round(test, 4), test_acc_notta=round(accuracy(carry, x_test, y_test, 0)[0], 4))
     out.update(views_per_image=round(1 + views * share, 3) if h['tta_gate'] > 0 and h['tta_level'] else views, **common)
     if save:
-        out['saved'] = str(save_model(net, h, save))
+        out['saved'] = str(save_model(S.merge(carry['params'], carry['rest']), h, save))
     return out
 
 
-def save_model(net, h: dict, directory: str) -> Path:
-    """The network's weights (``model.safetensors``, fp32) and the hyperparameters that rebuild it (``config.json``)."""
-    from safetensors.torch import save_file
+def save_model(net: nnx.Module, h: dict, directory: str) -> Path:
+    """The network's arrays (``model.safetensors``, float32: parameters, batch statistics) and the hyperparameters that
+    rebuild it (``config.json``)."""
+    from safetensors.numpy import save_file
+
+    from .hub import flat_weights
 
     d = Path(directory)
     d.mkdir(parents=True, exist_ok=True)
-    save_file({k: v.detach().float().contiguous().cpu() for k, v in net.state_dict().items()}, str(d / 'model.safetensors'))
-    (d / 'config.json').write_text(
-        json.dumps({'family': 'airbench', **h, 'widths': list(h['widths']), 'arch_kw': dict(h.get('arch_kw', {}))}, indent=1) + '\n'
-    )
+    save_file(flat_weights(net), str(d / 'model.safetensors'))
+    cfg = {
+        'family': 'airbench',
+        **h,
+        'widths': list(h['widths']),
+        'filter_proxy_widths': list(h['filter_proxy_widths']),
+        'arch_kw': dict(h.get('arch_kw', {})),
+    }
+    (d / 'config.json').write_text(json.dumps(cfg, indent=1) + '\n')
     return d
 
 
-def load(directory, device='cpu'):
-    """(network in eval mode on ``device``, fp32, its hyperparameters) from ``save_model``'s directory."""
-    import torch
-    from safetensors.torch import load_file
+def load(directory: str | Path, device: str = 'cpu', dtype: DTypeLike | None = None) -> tuple[nnx.Module, dict]:
+    """(network in eval mode, float32 weights, ``dtype`` its arithmetic (float32 by default), its hyperparameters) from
+    ``save_model``'s directory. ``device`` is where ``Predictor`` runs it (kept for the Torch signature)."""
+    from safetensors.numpy import load_file
+
+    from .hub import load_weights
 
     d = Path(directory)
     h = json.loads((d / 'config.json').read_text())
-    net, _ = build(h)
-    net.load_state_dict(load_file(str(d / 'model.safetensors')))
-    return net.to(torch.device(device)).eval(), h
+    net, _ = build(h, dtype)
+    load_weights(net, load_file(str(d / 'model.safetensors')))
+    net.eval()
+    return net, h
 
 
 class Predictor:
     """The inference contract the footprint bench measures: ``predict(uint8 (n, 32, 32, 3)) -> probabilities (n, 10)``,
     normalisation and TTA included."""
 
-    def __init__(self, directory, device='cpu', dtype=None, tta_level: int | None = None):
-        import torch
+    def __init__(self, directory: str | Path, device: str = 'cpu', dtype: DTypeLike | None = None, tta_level: int | None = None) -> None:
+        import jax
+        import jax.numpy as jnp
 
-        self.net, self.h = load(directory, device)
-        self.device = torch.device(device)
-        self.dtype = dtype or torch.float32
-        if self.dtype != torch.float32:
-            self.net = self.net.to(self.dtype)
-            for m in self.net.modules():
-                if isinstance(m, torch.nn.BatchNorm2d):
-                    m.float()
+        from . import jx
+
+        self.device = jx.pick(device)
+        self.dtype = jnp.dtype(dtype) if dtype is not None else jnp.float32
+        self.net, self.h = load(directory, device, self.dtype)
+        self.split = jx.Split(self.net)
+        self.params, self.rest = jax.device_put((self.split.params, self.split.rest), self.device)
         self.tta = self.h['tta_level'] if tta_level is None else tta_level
-        self.mean = torch.tensor(MEAN, device=self.device).view(1, 3, 1, 1)
-        self.std = torch.tensor(STD, device=self.device).view(1, 3, 1, 1)
+        gate = float(self.h.get('tta_gate', 0))
+        S, tta = self.split, self.tta
 
-    def predict(self, images):
-        import numpy as np
-        import torch
-
-        with torch.no_grad():
-            x = torch.from_numpy(np.ascontiguousarray(images, dtype=np.uint8)).to(self.device).permute(0, 3, 1, 2).float() / 255
-            x = ((x - self.mean) / self.std).to(self.dtype)
-            if self.h.get('tta_gate', 0) > 0 and self.tta:  # (MT6: the full views only where the margin is small)
+        def fwd(params: Any, rest: Any, images: jax.Array) -> jax.Array:
+            x = jx.normalise(images, MEAN, STD).astype(self.dtype)
+            apply = lambda v: S.apply(params, rest, v, train=False)[0]
+            if gate > 0 and tta:  # (MT6: the full views only where the margin is small)
                 from .methods import gated_logits
 
-                logits = gated_logits(self.net, x, self.tta, self.h['tta_gate'], tta_logits)[0]
+                logits = gated_logits(apply, x, tta, gate, tta_logits)[0]
             else:
-                logits = tta_logits(self.net, x, self.tta)
-            return torch.softmax(logits.float(), 1).cpu().numpy()
+                logits = tta_logits(apply, x, tta)
+            return jax.nn.softmax(logits.astype(jnp.float32), 1)
+
+        self._fwd = jax.jit(fwd)
+
+    def predict(self, images: NPArrayLike) -> np.ndarray:
+        import jax
+        import numpy as np
+
+        x = jax.device_put(np.ascontiguousarray(images, dtype=np.uint8), self.device)
+        return np.asarray(self._fwd(self.params, self.rest, x))

@@ -45,12 +45,23 @@ def test_predictions_are_probabilities_for_unseen_images(built, tmp_path):
 
 
 def test_macs_count_equivariant_layers_as_the_convolution_they_run():
-    import torch
+    import jax.numpy as jnp
+    from flax import nnx
 
-    from cifarq import methods
+    from cifarq import methods, nets
 
     for lift in (True, False):
         layer = methods.FlipConv(8, 8, lift=lift)
-        plain = torch.nn.Conv2d(*layer.full().shape[1::-1], 3, padding=1, bias=False)
-        x = torch.zeros(1, layer.full().shape[1], 16, 16)
-        assert footprint.count_macs(layer, x.shape) == footprint.count_macs(plain, x.shape) > 0
+        kh, kw, cin, cout = layer.full().shape
+        plain = nets.Conv(cin, cout, 3, padding=1, bias=False, dtype=jnp.float32, rngs=nnx.Rngs(0))
+        shape = (1, 16, 16, cin)
+        assert footprint.count_macs(layer, shape) == footprint.count_macs(plain, shape) == 16 * 16 * cout * cin * 9
+
+
+def test_macs_match_the_torch_counts():
+    """The Torch counter's numbers for the session's networks (results/footprint/20261030-151849.json)."""
+    ab96, _ = airbench.build(airbench.AIRBENCH96, abstract=True)
+    fin, _ = airbench.build({**airbench.DEFAULTS, 'depth': 3, 'widths': (128, 112, 144), 'flip_eq': 2}, abstract=True)
+    assert footprint.count_macs(ab96) == 451967264
+    assert footprint.count_macs(fin) == 237405888
+    assert airbench.param_counts(fin) == {'stored': 1944024, 'trainable': 1942584}

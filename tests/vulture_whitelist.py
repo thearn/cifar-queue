@@ -2,7 +2,7 @@
 source). Add a name here only with its reason; a name nothing uses is deleted instead."""
 
 # ruff: noqa: B018
-from cifarq import airbench, data, families, methods, nets, pbt, tune  # noqa: F401
+from cifarq import airbench, data, families, hub, methods, nets, pbt, train, tune  # noqa: F401
 
 # queue jobs name these functions by string ('module:function'): pipeline/57_front.py, 55_tune_on_vm.py, tools/pbt_g4.py
 families.train_front
@@ -17,10 +17,6 @@ airbench.AIRBENCH96
 # the hold-out's one evaluation, run by hand on a final model (its log, data/holdout/looks.jsonl, is the record)
 data.holdout.look
 
-# PyTorch calls these: a parametrization's right_inverse, autograd Functions' ctx, cudnn.benchmark set not read
-methods.SRFKernel.right_inverse
-nets.ctx
-airbench.torch.backends.cudnn.benchmark
 
 # Ray Tune calls a callback's hooks with these parameters
 tune.on_trial_complete
@@ -31,3 +27,14 @@ tune.info
 # pipeline/common.py's Direct executor: runq's search reads its slots (hpo.concurrency_of)
 Direct = None
 Direct.slots
+
+# huggingface_hub's ModelHubMixin calls these hooks (save_pretrained, from_pretrained)
+hub.ResNet9._save_pretrained
+hub.ResNet9._from_pretrained
+
+# a queue job names it as a string (tune.TRAIN_SEEDS: pipeline/60_champion.py)
+train.train_seeds
+
+# PyTorch reads it (the Torch profiling harness: cudnn picks its fastest convolution algorithms)
+torch = None
+torch.backends.cudnn.benchmark

@@ -36,3 +36,25 @@ def test_saved_network_predicts_what_training_measured(built, tmp_path, monkeypa
     assert probs.shape == (200, 10) and np.allclose(probs.sum(1), 1, atol=1e-5)
     acc = (probs.argmax(1) == built['y_test']).mean()
     assert abs(acc - r['test_acc']) <= 3 / len(probs)  # (training measured under bf16 autocast, predict in fp32)
+
+
+def test_seeds_in_one_program_are_separate_trainings(built):
+    """``train_seeds`` vmaps one configuration over seeds (the schedule-free average, whitening, cutmix and cutout
+    included): one seed is exactly ``train``'s run, a repeated seed gives the same run twice, and different seeds
+    differ. (Two seeds against one are equal only to rounding: the batched convolutions sum in another order.)"""
+    h = {
+        **SMALL,
+        'epochs': 1,
+        'optimizer': 'adamw_sf',
+        'lr': 0.006,
+        'whiten': True,
+        'tta_flip': True,
+        'mix': 'cutmix',
+        'mix_prob': 1.0,
+        'cutout_size': 8,
+    }
+    loss = lambda r: r['history'][0]['loss']
+    assert loss(train.train_seeds([1], **h)[0]) == loss(train.train(seed=1, **h))
+    a, b, c = train.train_seeds([1, 1, 0], together=True, **h)
+    assert loss(a) == loss(b) and a['test_acc'] == b['test_acc'] and loss(a) != loss(c)
+    assert [r['hyperparameters']['seed'] for r in (a, b, c)] == [1, 1, 0]

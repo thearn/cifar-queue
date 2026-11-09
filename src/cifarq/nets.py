@@ -1,8 +1,8 @@
 """The other network families of the autoresearch session's Goal A screen, built to train under ``airbench.train``
-(``arch`` and ``arch_kw``): each builder returns an ``nn.Sequential``-like module taking normalised (N, 3, 32, 32)
-images to logits, with plain ``nn.BatchNorm2d`` layers (``airbench.train`` freezes their scale when its
-``bn_scale`` is off, as airbench does) and an attribute ``whiten``: a frozen first convolution to set from the
-training patches, or None.
+(``arch`` and ``arch_kw``): each builder returns a Flax NNX module taking normalised (N, 32, 32, 3) images to logits,
+with plain batch norm layers (``airbench.train`` freezes their scale when its ``bn_scale`` is off, as airbench does,
+and sets their momentum to its ``bn_momentum``) and an attribute ``whiten``: a frozen first convolution to set from the
+training patches, or None. Layers are initialised as PyTorch's defaults; ``dtype`` is the arithmetic's.
 
 - ``convmixer``: Trockman & Kolter, "Patches are all you need?" (2022): a patch embedding of ``dim`` channels, then
   ``depth`` blocks of a residual depthwise convolution (``kernel``) and a pointwise one, GELU and batch norm after
@@ -18,215 +18,309 @@ training patches, or None.
 
 from __future__ import annotations
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+import jax
+import jax.numpy as jnp
+from flax import nnx
+
+from . import jx
+
+if TYPE_CHECKING:
+    from jax.typing import DTypeLike
+
+relu = jax.nn.relu
+gelu = lambda x: jax.nn.gelu(x, approximate=False)
 
 
-class _Net(nn.Module):
-    def __init__(self, body: nn.Module, whiten: nn.Conv2d | None = None):
-        super().__init__()
-        self.body, self.whiten = body, whiten
+class Conv(nnx.Module):
+    """``torch.nn.Conv2d``'s layer and initialisation; ``padding`` an int (symmetric), 'SAME' or 'VALID'."""
 
-    def forward(self, x):
+    def __init__(
+        self,
+        cin: int,
+        cout: int,
+        k: int,
+        stride: int = 1,
+        padding: int | str = 0,
+        bias: bool = True,
+        groups: int = 1,
+        *,
+        dtype: DTypeLike,
+        rngs: nnx.Rngs,
+    ) -> None:
+        self.weight = nnx.Param(jx.torch_kernel_init()(rngs.params(), (k, k, cin // groups, cout)))
+        self.bias = nnx.Param(jx.torch_bias_init(cin // groups * k * k)(rngs.params(), (cout,))) if bias else None
+        self.padding = [(padding, padding)] * 2 if isinstance(padding, int) else padding
+        self.stride, self.groups, self.dtype = stride, groups, dtype
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        y = jax.lax.conv_general_dilated(
+            x.astype(self.dtype),
+            self.weight[...].astype(self.dtype),
+            (self.stride, self.stride),
+            self.padding,
+            dimension_numbers=('NHWC', 'HWIO', 'NHWC'),
+            feature_group_count=self.groups,
+        )
+        return y + self.bias[...].astype(y.dtype) if self.bias is not None else y
+
+
+def _linear(cin: int, cout: int, dtype: DTypeLike, rngs: nnx.Rngs) -> nnx.Linear:
+    return nnx.Linear(cin, cout, kernel_init=jx.torch_kernel_init(), bias_init=jx.torch_bias_init(cin), dtype=dtype, rngs=rngs)
+
+
+def _bn(c: int, rngs: nnx.Rngs) -> nnx.BatchNorm:
+    return jx.batchnorm(c, rngs=rngs)
+
+
+def _avg_pool(x: jax.Array, k: int) -> jax.Array:
+    return nnx.avg_pool(x, (k, k), strides=(k, k))
+
+
+class _Net(nnx.Module):
+    def __init__(self, body: nnx.Module) -> None:
+        self.body, self.whiten = body, None
+
+    def __call__(self, x: jax.Array) -> jax.Array:
         return self.body(x)
 
 
-def convmixer(dim: int = 256, depth: int = 8, kernel: int = 9, patch: int = 1, classes: int = 10, **_):
-    class Residual(nn.Module):
-        def __init__(self, f):
-            super().__init__()
-            self.f = f
+class Seq(nnx.Module):
+    """Layers (modules or functions) applied in order."""
 
-        def forward(self, x):
-            return x + self.f(x)
+    def __init__(self, *layers: Callable) -> None:
+        self.layers = nnx.List(list(layers))
 
-    body = nn.Sequential(
-        nn.Conv2d(3, dim, patch, stride=patch),
-        nn.GELU(),
-        nn.BatchNorm2d(dim),
-        *[
-            nn.Sequential(
-                Residual(nn.Sequential(nn.Conv2d(dim, dim, kernel, groups=dim, padding='same'), nn.GELU(), nn.BatchNorm2d(dim))),
-                nn.Conv2d(dim, dim, 1),
-                nn.GELU(),
-                nn.BatchNorm2d(dim),
-            )
-            for _ in range(depth)
-        ],
-        nn.AdaptiveAvgPool2d(1),
-        nn.Flatten(),
-        nn.Linear(dim, classes),
-    )
+    def __call__(self, x: jax.Array) -> jax.Array:
+        for f in self.layers:
+            x = f(x)
+        return x
+
+
+class Residual(nnx.Module):
+    def __init__(self, f: Callable) -> None:
+        self.f = f
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        return x + self.f(x)
+
+
+def _head(cin: int, classes: int, dtype: DTypeLike, rngs: nnx.Rngs) -> Seq:
+    return Seq(lambda x: x.mean((1, 2)), _linear(cin, classes, dtype, rngs), lambda z: z.astype(jnp.float32))
+
+
+def convmixer(
+    dim: int = 256, depth: int = 8, kernel: int = 9, patch: int = 1, classes: int = 10, dtype: DTypeLike = jnp.float32, seed: int = 0, **_
+) -> _Net:
+    r = nnx.Rngs(params=seed)
+    blocks = [
+        Seq(
+            Residual(Seq(Conv(dim, dim, kernel, padding='SAME', groups=dim, dtype=dtype, rngs=r), gelu, _bn(dim, r))),
+            Conv(dim, dim, 1, dtype=dtype, rngs=r),
+            gelu,
+            _bn(dim, r),
+        )
+        for _ in range(depth)
+    ]
+    body = Seq(Conv(3, dim, patch, stride=patch, dtype=dtype, rngs=r), gelu, _bn(dim, r), *blocks, _head(dim, classes, dtype, r))
     return _Net(body)
 
 
-def resnet9(width: int = 32, logit_scale: float = 0.125, activation: str = 'relu', classes: int = 10, **_):
+def resnet9(width: int = 32, logit_scale: float = 0.125, activation: str = 'relu', classes: int = 10, seed: int = 0, **_) -> _Net:
     from .model import model
 
-    return _Net(model(width, 0.0, activation, classes=classes, logit_scale=logit_scale))
+    return _Net(model(width, 0.0, activation, classes=classes, logit_scale=logit_scale, seed=seed))
 
 
-def pyramidnet(depth: int = 110, alpha: float = 48, bottleneck: bool = False, classes: int = 10, **_):
+class _PyramidBlock(nnx.Module):
+    def __init__(self, cin: int, c: int, stride: int, bottleneck: bool, expansion: int, dtype: DTypeLike, r: nnx.Rngs) -> None:
+        cout = c * expansion
+        if bottleneck:
+            self.f = Seq(
+                _bn(cin, r),
+                Conv(cin, c, 1, bias=False, dtype=dtype, rngs=r),
+                _bn(c, r),
+                relu,
+                Conv(c, c, 3, stride, 1, bias=False, dtype=dtype, rngs=r),
+                _bn(c, r),
+                relu,
+                Conv(c, cout, 1, bias=False, dtype=dtype, rngs=r),
+                _bn(cout, r),
+            )
+        else:
+            self.f = Seq(
+                _bn(cin, r),
+                Conv(cin, c, 3, stride, 1, bias=False, dtype=dtype, rngs=r),
+                _bn(c, r),
+                relu,
+                Conv(c, cout, 3, 1, 1, bias=False, dtype=dtype, rngs=r),
+                _bn(cout, r),
+            )
+        self.stride, self.pad = stride, cout - cin
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        s = _avg_pool(x, 2) if self.stride == 2 else x
+        y = self.f(x)
+        if self.pad:
+            s = jnp.pad(s, ((0, 0), (0, 0), (0, 0), (0, self.pad)))
+        return y + s.astype(y.dtype)
+
+
+def pyramidnet(
+    depth: int = 110, alpha: float = 48, bottleneck: bool = False, classes: int = 10, dtype: DTypeLike = jnp.float32, seed: int = 0, **_
+) -> _Net:
+    r = nnx.Rngs(params=seed)
     n = (depth - 2) // (9 if bottleneck else 6)
     expansion = 4 if bottleneck else 1
     add = alpha / (3 * n)
-
-    class Block(nn.Module):
-        def __init__(self, cin, c, stride):
-            super().__init__()
-            cout = c * expansion
-            if bottleneck:
-                self.f = nn.Sequential(
-                    nn.BatchNorm2d(cin),
-                    nn.Conv2d(cin, c, 1, bias=False),
-                    nn.BatchNorm2d(c),
-                    nn.ReLU(inplace=True),
-                    nn.Conv2d(c, c, 3, stride, 1, bias=False),
-                    nn.BatchNorm2d(c),
-                    nn.ReLU(inplace=True),
-                    nn.Conv2d(c, cout, 1, bias=False),
-                    nn.BatchNorm2d(cout),
-                )
-            else:
-                self.f = nn.Sequential(
-                    nn.BatchNorm2d(cin),
-                    nn.Conv2d(cin, c, 3, stride, 1, bias=False),
-                    nn.BatchNorm2d(c),
-                    nn.ReLU(inplace=True),
-                    nn.Conv2d(c, cout, 3, 1, 1, bias=False),
-                    nn.BatchNorm2d(cout),
-                )
-            self.stride, self.pad = stride, cout - cin
-
-        def forward(self, x):
-            s = F.avg_pool2d(x, 2) if self.stride == 2 else x
-            if self.pad:
-                s = F.pad(s, (0, 0, 0, 0, 0, self.pad))
-            return self.f(x) + s
-
-    layers, c, cin = [nn.Conv2d(3, 16, 3, 1, 1, bias=False), nn.BatchNorm2d(16)], 16.0, 16
+    layers, c, cin = [Conv(3, 16, 3, 1, 1, bias=False, dtype=dtype, rngs=r), _bn(16, r)], 16.0, 16
     for stage in range(3):
         for i in range(n):
             c += add
-            layers.append(Block(cin, int(round(c)), 2 if stage > 0 and i == 0 else 1))
+            layers.append(_PyramidBlock(cin, int(round(c)), 2 if stage > 0 and i == 0 else 1, bottleneck, expansion, dtype, r))
             cin = int(round(c)) * expansion
-    layers += [nn.BatchNorm2d(cin), nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(cin, classes)]
-    return _Net(nn.Sequential(*layers))
+    layers += [_bn(cin, r), relu, _head(cin, classes, dtype, r)]
+    return _Net(Seq(*layers))
 
 
-def densenet(depth: int = 100, growth: int = 12, classes: int = 10, **_):
-    n = (depth - 4) // 6
-
-    class Layer(nn.Module):
-        def __init__(self, cin):
-            super().__init__()
-            self.f = nn.Sequential(
-                nn.BatchNorm2d(cin),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(cin, 4 * growth, 1, bias=False),
-                nn.BatchNorm2d(4 * growth),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(4 * growth, growth, 3, 1, 1, bias=False),
-            )
-
-        def forward(self, x):
-            return torch.cat([x, self.f(x)], 1)
-
-    layers, c = [nn.Conv2d(3, 2 * growth, 3, 1, 1, bias=False)], 2 * growth
-    for stage in range(3):
-        for _ in range(n):
-            layers.append(Layer(c))
-            c += growth
-        if stage < 2:
-            layers += [nn.BatchNorm2d(c), nn.ReLU(inplace=True), nn.Conv2d(c, c // 2, 1, bias=False), nn.AvgPool2d(2)]
-            c //= 2
-    layers += [nn.BatchNorm2d(c), nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(c, classes)]
-    return _Net(nn.Sequential(*layers))
-
-
-class _Shake(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, a, b, training):
-        if not training:
-            return 0.5 * (a + b)
-        w = torch.rand(a.size(0), 1, 1, 1, device=a.device, dtype=a.dtype)
-        return w * a + (1 - w) * b
-
-    @staticmethod
-    def backward(ctx, g):
-        w = torch.rand(g.size(0), 1, 1, 1, device=g.device, dtype=g.dtype)
-        return w * g, (1 - w) * g, None
-
-
-def shakeshake(depth: int = 26, width: int = 32, classes: int = 10, **_):
-    n = (depth - 2) // 6
-
-    def branch(cin, cout, stride):
-        return nn.Sequential(
-            nn.ReLU(),
-            nn.Conv2d(cin, cout, 3, stride, 1, bias=False),
-            nn.BatchNorm2d(cout),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(cout, cout, 3, 1, 1, bias=False),
-            nn.BatchNorm2d(cout),
+class _DenseLayer(nnx.Module):
+    def __init__(self, cin: int, growth: int, dtype: DTypeLike, r: nnx.Rngs) -> None:
+        self.f = Seq(
+            _bn(cin, r),
+            relu,
+            Conv(cin, 4 * growth, 1, bias=False, dtype=dtype, rngs=r),
+            _bn(4 * growth, r),
+            relu,
+            Conv(4 * growth, growth, 3, 1, 1, bias=False, dtype=dtype, rngs=r),
         )
 
-    class Shortcut(nn.Module):  # (the paper's: two 1x1 paths, the second shifted a pixel)
-        def __init__(self, cin, cout, stride):
-            super().__init__()
-            self.a, self.b = nn.Conv2d(cin, cout // 2, 1, bias=False), nn.Conv2d(cin, cout // 2, 1, bias=False)
-            self.bn, self.stride = nn.BatchNorm2d(cout), stride
+    def __call__(self, x: jax.Array) -> jax.Array:
+        y = self.f(x)
+        return jnp.concatenate([x.astype(y.dtype), y], -1)
 
-        def forward(self, x):
-            x = F.relu(x)
-            shifted = F.pad(x[:, :, 1:, 1:], (0, 1, 0, 1))
-            return self.bn(torch.cat([self.a(F.avg_pool2d(x, 1, self.stride)), self.b(F.avg_pool2d(shifted, 1, self.stride))], 1))
 
-    class Block(nn.Module):
-        def __init__(self, cin, cout, stride):
-            super().__init__()
-            self.b1, self.b2 = branch(cin, cout, stride), branch(cin, cout, stride)
-            self.short = Shortcut(cin, cout, stride) if stride != 1 or cin != cout else nn.Identity()
+def densenet(depth: int = 100, growth: int = 12, classes: int = 10, dtype: DTypeLike = jnp.float32, seed: int = 0, **_) -> _Net:
+    r = nnx.Rngs(params=seed)
+    n = (depth - 4) // 6
+    layers, c = [Conv(3, 2 * growth, 3, 1, 1, bias=False, dtype=dtype, rngs=r)], 2 * growth
+    for stage in range(3):
+        for _ in range(n):
+            layers.append(_DenseLayer(c, growth, dtype, r))
+            c += growth
+        if stage < 2:
+            layers += [_bn(c, r), relu, Conv(c, c // 2, 1, bias=False, dtype=dtype, rngs=r), lambda x: _avg_pool(x, 2)]
+            c //= 2
+    layers += [_bn(c, r), relu, _head(c, classes, dtype, r)]
+    return _Net(Seq(*layers))
 
-        def forward(self, x):
-            return self.short(x) + _Shake.apply(self.b1(x), self.b2(x), self.training)
 
-    layers, cin = [nn.Conv2d(3, 16, 3, 1, 1, bias=False), nn.BatchNorm2d(16)], 16
+@jax.custom_vjp
+def _shake(a: jax.Array, b: jax.Array, wf: jax.Array, wb: jax.Array) -> jax.Array:
+    return wf * a + (1 - wf) * b
+
+
+def _shake_fwd(a: jax.Array, b: jax.Array, wf: jax.Array, wb: jax.Array) -> tuple[jax.Array, jax.Array]:
+    return _shake(a, b, wf, wb), wb
+
+
+def _shake_bwd(wb: jax.Array, g: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    return wb * g, (1 - wb) * g, jnp.zeros_like(wb), jnp.zeros_like(wb)
+
+
+_shake.defvjp(_shake_fwd, _shake_bwd)
+
+
+class Shake(nnx.Module):
+    """Shake-shake mixing: a random convex weight per image forward and an independent one backward in training,
+    0.5 each at test (``deterministic``, set by ``eval()``)."""
+
+    def __init__(self, r: nnx.Rngs) -> None:
+        self.rngs, self.deterministic = r, False
+
+    def __call__(self, a: jax.Array, b: jax.Array) -> jax.Array:
+        if self.deterministic:
+            return 0.5 * (a + b)
+        shape = (a.shape[0], 1, 1, 1)
+        wf = jax.random.uniform(self.rngs.shake(), shape, a.dtype)
+        wb = jax.random.uniform(self.rngs.shake(), shape, a.dtype)
+        return _shake(a, b, wf, wb)
+
+
+class _Shortcut(nnx.Module):  # (the paper's: two 1x1 paths, the second shifted a pixel)
+    def __init__(self, cin: int, cout: int, stride: int, dtype: DTypeLike, r: nnx.Rngs) -> None:
+        self.a, self.b = Conv(cin, cout // 2, 1, bias=False, dtype=dtype, rngs=r), Conv(cin, cout // 2, 1, bias=False, dtype=dtype, rngs=r)
+        self.bn, self.stride = _bn(cout, r), stride
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        x = relu(x)
+        shifted = jnp.pad(x[:, 1:, 1:], ((0, 0), (0, 1), (0, 1), (0, 0)))
+        s = self.stride
+        return self.bn(jnp.concatenate([self.a(x[:, ::s, ::s]), self.b(shifted[:, ::s, ::s])], -1))
+
+
+class _ShakeBlock(nnx.Module):
+    def __init__(self, cin: int, cout: int, stride: int, dtype: DTypeLike, r: nnx.Rngs) -> None:
+        branch = lambda: Seq(
+            relu,
+            Conv(cin, cout, 3, stride, 1, bias=False, dtype=dtype, rngs=r),
+            _bn(cout, r),
+            relu,
+            Conv(cout, cout, 3, 1, 1, bias=False, dtype=dtype, rngs=r),
+            _bn(cout, r),
+        )
+        self.b1, self.b2 = branch(), branch()
+        self.short = _Shortcut(cin, cout, stride, dtype, r) if stride != 1 or cin != cout else None
+        self.shake = Shake(nnx.Rngs(shake=r.params()))
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        y = self.shake(self.b1(x), self.b2(x))
+        return (self.short(x) if self.short is not None else x).astype(y.dtype) + y
+
+
+def shakeshake(depth: int = 26, width: int = 32, classes: int = 10, dtype: DTypeLike = jnp.float32, seed: int = 0, **_) -> _Net:
+    r = nnx.Rngs(params=seed)
+    n = (depth - 2) // 6
+    layers, cin = [Conv(3, 16, 3, 1, 1, bias=False, dtype=dtype, rngs=r), _bn(16, r)], 16
     for stage, c in enumerate((width, 2 * width, 4 * width)):
         for i in range(n):
-            layers.append(Block(cin, c, 2 if stage > 0 and i == 0 else 1))
+            layers.append(_ShakeBlock(cin, c, 2 if stage > 0 and i == 0 else 1, dtype, r))
             cin = c
-    layers += [nn.ReLU(), nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(cin, classes)]
-    return _Net(nn.Sequential(*layers))
+    layers += [relu, _head(cin, classes, dtype, r)]
+    return _Net(Seq(*layers))
 
 
-def wrn(depth: int = 16, k: int = 4, classes: int = 10, **_):
+class _WRNBlock(nnx.Module):
+    def __init__(self, cin: int, cout: int, stride: int, dtype: DTypeLike, r: nnx.Rngs) -> None:
+        self.bn1, self.conv1 = _bn(cin, r), Conv(cin, cout, 3, stride, 1, bias=False, dtype=dtype, rngs=r)
+        self.bn2, self.conv2 = _bn(cout, r), Conv(cout, cout, 3, 1, 1, bias=False, dtype=dtype, rngs=r)
+        self.short = Conv(cin, cout, 1, stride, bias=False, dtype=dtype, rngs=r) if stride != 1 or cin != cout else None
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        o = relu(self.bn1(x))
+        y = self.conv2(relu(self.bn2(self.conv1(o))))
+        return y + (self.short(o) if self.short is not None else x).astype(y.dtype)
+
+
+def wrn(depth: int = 16, k: int = 4, classes: int = 10, dtype: DTypeLike = jnp.float32, seed: int = 0, **_) -> _Net:
+    r = nnx.Rngs(params=seed)
     n = (depth - 4) // 6
-
-    class Block(nn.Module):
-        def __init__(self, cin, cout, stride):
-            super().__init__()
-            self.bn1, self.conv1 = nn.BatchNorm2d(cin), nn.Conv2d(cin, cout, 3, stride, 1, bias=False)
-            self.bn2, self.conv2 = nn.BatchNorm2d(cout), nn.Conv2d(cout, cout, 3, 1, 1, bias=False)
-            self.short = nn.Conv2d(cin, cout, 1, stride, bias=False) if stride != 1 or cin != cout else None
-
-        def forward(self, x):
-            o = F.relu(self.bn1(x))
-            y = self.conv2(F.relu(self.bn2(self.conv1(o))))
-            return y + (self.short(o) if self.short is not None else x)
-
-    layers, cin = [nn.Conv2d(3, 16, 3, 1, 1, bias=False)], 16
+    layers, cin = [Conv(3, 16, 3, 1, 1, bias=False, dtype=dtype, rngs=r)], 16
     for stage, c in enumerate((16 * k, 32 * k, 64 * k)):
         for i in range(n):
-            layers.append(Block(cin, c, 2 if stage > 0 and i == 0 else 1))
+            layers.append(_WRNBlock(cin, c, 2 if stage > 0 and i == 0 else 1, dtype, r))
             cin = c
-    layers += [nn.BatchNorm2d(cin), nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(cin, classes)]
-    return _Net(nn.Sequential(*layers))
+    layers += [_bn(cin, r), relu, _head(cin, classes, dtype, r)]
+    return _Net(Seq(*layers))
 
 
 BUILDERS = {'convmixer': convmixer, 'resnet9': resnet9, 'pyramidnet': pyramidnet, 'densenet': densenet, 'shakeshake': shakeshake, 'wrn': wrn}
 
 
-def build(arch: str, **kw):
+def build(arch: str, **kw) -> nnx.Module:
+    """``BUILDERS[arch](**kw)``; ``dtype`` (the arithmetic's) and ``seed`` (the initialisation's) pass through, and
+    ``None`` means float32."""
+    if kw.get('dtype') is None:
+        kw['dtype'] = jnp.float32
     return BUILDERS[arch](**kw)

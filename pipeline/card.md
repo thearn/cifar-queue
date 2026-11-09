@@ -1,6 +1,6 @@
 ---
 license: $license
-library_name: pytorch
+library_name: jax
 pipeline_tag: $pipeline_tag
 tags: [$tags]
 datasets: [$dataset]

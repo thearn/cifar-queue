@@ -30,6 +30,7 @@ from pathlib import Path
 from . import evaluate
 
 TRAIN = 'cifarq.train:train'
+TRAIN_SEEDS = 'cifarq.train:train_seeds'  # one configuration over several seeds as one job
 OBJECTIVE, DIRECTION = evaluate.KEY, evaluate.DIRECTION
 
 
@@ -185,9 +186,10 @@ def train_params(params: dict) -> dict:
     return space(optuna.trial.FixedTrial(params), schedule_free='schedule_free' in params)
 
 
-# on a VM a trial runs as a fork of runq's persistent worker, which imported torch and the training code and
-# loaded the arrays once (the local GPU's jobs run as their own processes either way)
-WORKER = {'preload': ['torch', 'torch.nn.functional', 'cifarq.train', 'cifarq.data.dataset:warm']}
+# on a VM a trial runs as a fork of runq's persistent worker, which imported the training code and loaded the arrays
+# once (the local GPU's jobs run as their own processes either way). JAX itself is not preloaded: its runtime does not
+# survive a fork (the GPU client starts in the child), so the worker imports the modules without touching a device.
+WORKER = {'preload': ['jax', 'flax.nnx', 'optax', 'cifarq.train', 'cifarq.data.dataset:warm']}
 
 
 def job_options(params: dict) -> dict:

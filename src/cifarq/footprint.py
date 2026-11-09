@@ -7,46 +7,54 @@ A model is a saved directory: ``config.json`` names its family (``airbench``; no
 multiply-accumulates per image; ``measure`` runs one setting (device, threads, batch) in a fresh process so memory
 peaks start from the interpreter's floor; ``bench`` does the whole table. Run on the local machine only, so timings
 compare.
+
+MACs are read from the network's traced program (``count_macs``): every convolution and matrix product that combines
+the input with the network's arrays, so expanded equivariant kernels count as the convolution they run, while
+products of weights alone (structured-receptive-field kernels built from their coefficients) and convolutions with
+constant filters (the blur pool's) are not counted, as the Torch counter's module hooks did not count them.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Any
+
+    import jax
+    import numpy as np
+    from flax import nnx
+    from jax.extend import core
+    from numpy.typing import ArrayLike
+
+    from .airbench import Predictor
 
 
-def family(directory) -> str:
+def family(directory: str | Path) -> str:
     cfg = json.loads((Path(directory) / 'config.json').read_text())
     return cfg.get('family', 'resnet9')
 
 
 class _ResNet9Predictor:
-    def __init__(self, directory, device='cpu', dtype=None):
-        import torch
-
+    def __init__(self, directory: str | Path, device: str = 'cpu', dtype: str | None = None) -> None:
         from .hub import ResNet9
 
-        self.net = ResNet9.from_pretrained(str(directory)).to(device).eval()
-        self.dtype = dtype or torch.float32
-        if self.dtype != torch.float32:
-            self.net = self.net.to(self.dtype)
-            for m in self.net.modules():
-                if isinstance(m, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d)):
-                    m.float()
+        self.net = ResNet9.from_pretrained(str(directory))
         self.views = 2 if self.net.tta_flip else 1
-        self.device = torch.device(device)
+        self.device = device
 
-    def predict(self, images):
+    def predict(self, images: ArrayLike) -> np.ndarray:
         import numpy as np
-        import torch
 
-        with torch.no_grad(), torch.autocast(self.device.type, dtype=self.dtype, enabled=self.dtype != torch.float32):
-            return self.net.predict(np.asarray(images, dtype=np.uint8))
+        return self.net.predict(np.asarray(images, dtype=np.uint8))
 
 
-def predictor(directory, device='cpu', dtype=None):
+def predictor(directory: str | Path, device: str = 'cpu', dtype: str | None = None) -> _ResNet9Predictor | Predictor:
     fam = family(directory)
     if fam == 'airbench':
         from .airbench import Predictor
@@ -57,7 +65,7 @@ def predictor(directory, device='cpu', dtype=None):
     raise ValueError(f'unknown family {fam!r}')
 
 
-def views(directory) -> int:
+def views(directory: str | Path) -> int:
     """Forward passes per image at inference (test-time augmentation's views)."""
     cfg = json.loads((Path(directory) / 'config.json').read_text())
     if family(directory) == 'resnet9':
@@ -65,53 +73,90 @@ def views(directory) -> int:
     return {0: 1, 1: 2, 2: 6, 3: 18}[int(cfg.get('tta_level', 0))]  # (level 3: added 2026-10-30, P2)
 
 
-def count_macs(net, shape=(1, 3, 32, 32)) -> int:
-    """Multiply-accumulates of one forward pass of ``net`` (fp32, CPU) on an input of ``shape``: convolutions (grouped
-    ones included) and linear layers, which carry all but a negligible share of the arithmetic here."""
-    import torch
+def _macs(jaxpr: core.Jaxpr, depends: dict[Any, set[str]]) -> int:
+    """MACs of the equations of ``jaxpr`` whose operands mix the input with the arrays: ``depends`` maps each invar to
+    its set of sources ({'x'}, {'w'} or both), propagated through every equation (sub-programs recursively)."""
+    from jax.extend import core
 
-    total = [0]
+    src = dict(depends)
+    get = lambda v: src.get(v, set()) if not isinstance(v, core.Literal) else set()
+    total = 0
+    for eqn in jaxpr.eqns:
+        ins = [get(v) for v in eqn.invars]
+        name = eqn.primitive.name
+        if name in ('conv_general_dilated', 'dot_general') and len(ins) >= 2 and ({'x'} <= ins[0] | ins[1]) and ins[0] and ins[1]:
+            mixed = ('x' in ins[0] and 'w' in ins[1]) or ('w' in ins[0] and 'x' in ins[1])
+            if mixed:
+                out = eqn.outvars[0].aval
+                lhs, rhs = eqn.invars[0].aval, eqn.invars[1].aval
+                if name == 'conv_general_dilated':
+                    o = eqn.params['dimension_numbers'].rhs_spec[0]
+                    per = 1
+                    for i, d in enumerate(rhs.shape):
+                        if i != o:
+                            per *= d
+                    total += int(out.size) * per
+                else:
+                    (lc, _), _ = eqn.params['dimension_numbers']
+                    per = 1
+                    for i in lc:
+                        per *= lhs.shape[i]
+                    total += int(out.size) * per
+        for p in eqn.params.values():
+            sub = getattr(p, 'jaxpr', p)
+            if hasattr(sub, 'eqns') and hasattr(sub, 'invars') and len(sub.invars) == len(eqn.invars):
+                total += _macs(sub, dict(zip(sub.invars, ins, strict=True)))
+        union = set().union(*ins) if ins else set()
+        for v in eqn.outvars:
+            src[v] = union
+    return total
 
-    def hook(m, inputs, out):
-        if isinstance(m, torch.nn.Conv2d):
-            total[0] += out.numel() * (m.in_channels // m.groups) * m.kernel_size[0] * m.kernel_size[1]
-        elif isinstance(m, torch.nn.Linear):
-            total[0] += out.numel() * m.in_features
-        elif hasattr(m, 'full'):
-            # an equivariant convolution (methods.FlipConv, P4MConv): the expanded kernel it runs, not its stored
-            # weights (revision a4, 2026-10-30: before it, these layers were not counted at all)
-            k = m.full()
-            total[0] += out.numel() * k.shape[1] * k.shape[2] * k.shape[3]
 
-    counted = lambda m: isinstance(m, (torch.nn.Conv2d, torch.nn.Linear)) or hasattr(m, 'full')
-    handles = [m.register_forward_hook(hook) for m in net.modules() if counted(m)]
-    try:
-        net = net.float().eval()
-        with torch.no_grad():
-            net(torch.zeros(shape))
-    finally:
-        for h in handles:
-            h.remove()
-    return total[0] // shape[0]
+def count_macs(net: nnx.Module, shape: tuple[int, ...] = (1, 32, 32, 3)) -> int:
+    """Multiply-accumulates of one forward pass of ``net`` (a Flax NNX module, evaluation mode) on an NHWC input of
+    ``shape``, per image: convolutions (grouped ones included) and matrix products of the input with the network's
+    arrays, which carry all but a negligible share of the arithmetic here. Traced only: nothing runs (an abstract
+    network from ``nnx.eval_shape`` works)."""
+    import jax
+    import jax.numpy as jnp
+    from flax import nnx
+
+    net.eval()
+    graph, state = nnx.split(net)
+
+    def f(state: nnx.State, x: jax.Array) -> jax.Array:
+        return nnx.merge(graph, state, copy=True)(x)
+
+    spec = jax.tree.map(lambda a: jax.ShapeDtypeStruct(a.shape, a.dtype), state)
+    closed = jax.make_jaxpr(f)(spec, jax.ShapeDtypeStruct(shape, jnp.float32))
+    jaxpr = closed.jaxpr
+    n_state = len(jax.tree.leaves(spec))
+    depends = {v: ({'w'} if i < n_state else {'x'}) for i, v in enumerate(jaxpr.invars)}
+    for v in jaxpr.constvars:
+        depends[v] = set()
+    return _macs(jaxpr, depends) // shape[0]
 
 
-def static(directory) -> dict:
-    """Parameters (stored: every parameter tensor, frozen ones included; trainable), stored bytes (every file of the
+def static(directory: str | Path) -> dict:
+    """Parameters (stored: every parameter array, frozen ones included; trainable), stored bytes (every file of the
     directory the predictor needs), and MACs per image (one view, and times the views)."""
+    from flax import nnx
+
+    from . import jx
+
     d = Path(directory)
     p = predictor(d)
-    net = p.net.net if family(d) == 'resnet9' else p.net
-    stored = sum(t.numel() for t in net.parameters())
-    trainable = sum(t.numel() for t in net.parameters() if t.requires_grad)
     if family(d) == 'resnet9':
-        frozen = sum(m.weight.numel() for m in net.modules() if hasattr(m, 'weight') and m.weight is not None and not m.weight.requires_grad)
+        net = p.net.net
+        frozen = jx.count(nnx.state(net, jx.Frozen))
+        stored = jx.count(nnx.state(net, nnx.Param)) + frozen
         trainable = stored - frozen
-    elif family(d) == 'airbench':
-        from .airbench import _groups, build, param_counts
+    else:
+        from .airbench import build, param_counts
 
-        fresh, whiten = build(p.h)
-        _groups(fresh, whiten, p.h.get('bn_scale', False))
-        trainable = param_counts(fresh)['trainable']
+        net = p.net
+        c = param_counts(build(p.h, abstract=True)[0], p.h.get('bn_scale', False))
+        stored, trainable = c['stored'], c['trainable']
     macs = count_macs(net)
     v = views(d)
     return {
@@ -128,17 +173,18 @@ def static(directory) -> dict:
 class _Null:
     """The null model of the memory baseline: the same inputs, a constant output, no network."""
 
-    def __init__(self, device):
-        import torch
+    def __init__(self, device: str) -> None:
+        from . import jx
 
-        self.device = torch.device(device)
+        self.device = jx.pick(device)
 
-    def predict(self, images):
+    def predict(self, images: ArrayLike) -> np.ndarray:
+        import jax
+        import jax.numpy as jnp
         import numpy as np
-        import torch
 
-        x = torch.from_numpy(np.ascontiguousarray(images)).to(self.device).float()
-        return torch.full((len(images), 10), 0.1, device=self.device).add_(0 * x.mean()).cpu().numpy()
+        x = jax.device_put(np.ascontiguousarray(images), self.device).astype(jnp.float32)
+        return np.asarray(jnp.full((len(images), 10), 0.1) + 0 * x.mean())
 
 
 def _vmrss_mb() -> float:
@@ -150,39 +196,33 @@ def _vmrss_mb() -> float:
 
 
 def _measure(directory: str, device: str, threads: int, batch: int, warmup: int, timed: int) -> dict:
-    """One setting, in this (fresh) process: the process's peak memory (RSS, and GPU allocations), and latency or
-    throughput. ``directory`` ``null`` measures the baseline (``_Null``), which ``measure`` subtracts."""
+    """One setting, in this (fresh) process: the process's peak memory (RSS, and the GPU's peak bytes in use), and
+    latency or throughput. ``directory`` ``null`` measures the baseline (``_Null``), which ``measure`` subtracts.
+    ``threads`` is set by ``_fresh`` (XLA's CPU thread flags, before JAX starts)."""
     import resource
     import time
 
+    import jax
     import numpy as np
-    import torch
 
-    if threads:
-        torch.set_num_threads(threads)
-    dev = torch.device(device)
-    if dev.type == 'cuda':
-        torch.zeros(1, device=dev)
-        torch.cuda.synchronize()
-    dtype = torch.bfloat16 if dev.type == 'cuda' else torch.float32
-    if dev.type == 'cuda':
-        torch.cuda.reset_peak_memory_stats(dev)
+    from . import jx
+
+    dev = jx.pick(device)
+    gpu = dev.platform == 'gpu'
+    dtype = 'bfloat16' if gpu else None
     p = _Null(device) if directory == 'null' else predictor(directory, device, dtype)
     images = np.random.default_rng(0).integers(0, 256, size=(batch, 32, 32, 3), dtype=np.uint8)
-    sync = torch.cuda.synchronize if dev.type == 'cuda' else (lambda: None)
     for _ in range(warmup):
         p.predict(images)
-    sync()
     times = []
     for _ in range(timed):
         t = time.perf_counter()
-        p.predict(images)
-        sync()
+        p.predict(images)  # (returns NumPy: synchronised)
         times.append(time.perf_counter() - t)
     times = np.asarray(times)
     out = {
         'device': device,
-        'threads': threads or torch.get_num_threads(),
+        'threads': threads or os.cpu_count(),
         'batch': batch,
         'p50_ms': round(1e3 * float(np.median(times)), 3),
         'p95_ms': round(1e3 * float(np.percentile(times, 95)), 3),
@@ -190,21 +230,28 @@ def _measure(directory: str, device: str, threads: int, batch: int, warmup: int,
         'peak_rss_mb': round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1),
         'rss_mb': _vmrss_mb(),
     }
-    if dev.type == 'cuda':
-        out['peak_gpu_mb'] = round(torch.cuda.max_memory_allocated(dev) / 2**20, 1)
-        out['gpu'] = torch.cuda.get_device_name(dev)
+    if gpu:
+        stats = dev.memory_stats() or {}
+        out['peak_gpu_mb'] = round(stats.get('peak_bytes_in_use', 0) / 2**20, 1)
+        out['gpu'] = dev.device_kind
+    del jax
     return out
 
 
-def _fresh(directory, device, threads, batch, warmup, timed) -> dict:
+def _fresh(directory: str | Path, device: str, threads: int, batch: int, warmup: int, timed: int) -> dict:
+    env = dict(os.environ)
+    if device == 'cpu':
+        env['JAX_PLATFORMS'] = 'cpu'
+        if threads:
+            env['XLA_FLAGS'] = (env.get('XLA_FLAGS', '') + f' --xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads={threads}').strip()
     cmd = [sys.executable, '-m', 'cifarq.footprint', str(directory), device, str(threads), str(batch), str(warmup), str(timed)]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True, env=env)
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
-def measure(directory, device='cpu', threads: int = 0, batch: int = 1, warmup: int = 20, timed: int = 200) -> dict:
+def measure(directory: str | Path, device: str = 'cpu', threads: int = 0, batch: int = 1, warmup: int = 20, timed: int = 200) -> dict:
     """``_measure`` in a fresh interpreter, and the null model's in another: peak memory is the model's process peak
-    minus the null's (the same imports, inputs and CUDA context: what the model itself adds), latency the model's."""
+    minus the null's (the same imports, inputs and device runtime: what the model itself adds), latency the model's."""
     r = _fresh(directory, device, threads, batch, warmup, timed)
     null = _fresh('null', device, threads, batch, 2, 3)
     r['peak_rss_total_mb'], r['rss_total_mb'] = r['peak_rss_mb'], r['rss_mb']
@@ -226,13 +273,21 @@ SETTINGS = [  # (name, device, threads, batch, warmup, timed)
 ]
 
 
-def bench(directory, settings=None, gpu: bool = True) -> dict:
-    """The whole table: ``static`` and every setting of ``SETTINGS`` (the GPU ones only when ``gpu`` and CUDA is there)."""
-    import torch
+def _gpu_present() -> bool:
+    try:
+        import jax
 
+        return bool(jax.devices('gpu'))
+    except RuntimeError:
+        return False
+
+
+def bench(directory: str | Path, settings: list[tuple[str, str, int, int, int, int]] | None = None, gpu: bool = True) -> dict:
+    """The whole table: ``static`` and every setting of ``SETTINGS`` (the GPU ones only when ``gpu`` and a GPU is there)."""
     out = {'model': str(directory), **static(directory), 'runs': {}}
+    has_gpu = gpu and _gpu_present()
     for name, device, threads, batch, warmup, timed in settings or SETTINGS:
-        if device == 'cuda' and not (gpu and torch.cuda.is_available()):
+        if device == 'cuda' and not has_gpu:
             continue
         out['runs'][name] = measure(directory, device, threads, batch, warmup, timed)
     return out

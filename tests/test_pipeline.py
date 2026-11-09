@@ -29,7 +29,11 @@ def root(tmp_path_factory):
     root = tmp_path_factory.mktemp('project')
     copy_configs(root)
     (root / 'README.md').write_text('# cifar-queue\n\nThe introduction.\n\n## Using the model\n\nThe rest.\n')
-    for args in (['init', '-q'], ['add', '-A'], ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'configs']):
+    for args in (
+        ['init', '-q'],
+        ['add', '-A'],
+        ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'chore: configs'],
+    ):
         subprocess.run(['git', '-C', str(root), *args], check=True)
     run(root, '10_ingest.py')
     run(root, '20_clean.py', '--targets', 'direct')

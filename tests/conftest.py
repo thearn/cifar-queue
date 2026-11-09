@@ -26,7 +26,7 @@ def copy_configs(root: Path):
 TMP = Path(tempfile.mkdtemp(prefix='cifarq-test-'))
 copy_configs(TMP)
 os.environ['ML_PROJECT_ROOT'] = str(TMP)
-os.environ.setdefault('CUDA_VISIBLE_DEVICES', '')  # the tests are CPU tests, also on a machine with a GPU
+os.environ.setdefault('JAX_PLATFORMS', 'cpu')  # the tests are CPU tests, also on a machine with a GPU
 
 
 @pytest.fixture(scope='session')

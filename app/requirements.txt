@@ -1,3 +1,2 @@
---extra-index-url https://download.pytorch.org/whl/cpu
-torch
+jax
 cifarq @ git+https://huggingface.co/thearn/cifar10-resnet9

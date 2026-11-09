@@ -10,9 +10,9 @@ SMALL = {'widths': (16, 32, 32), 'batch_size': 64, 'epochs': 2}
 
 
 def test_published_parameter_counts():
-    count = lambda h: airbench.param_counts(airbench.model(h['widths'], h['depth']))['stored']
-    assert abs(count(airbench.AIRBENCH94) - 1.97e6) < 0.01e6  # the paper's 1.97 M
-    assert abs(count(airbench.AIRBENCH96) - 9.92e6) < 0.01e6  # 128/384/512, three convs a group
+    count = lambda h: airbench.param_counts(airbench.build(h, abstract=True)[0])
+    assert count(airbench.AIRBENCH94)['stored'] == 1972792  # the paper's 1.97 M (the Torch port's count, E1.2)
+    assert count(airbench.AIRBENCH96) == {'stored': 9918776, 'trainable': 9915416}  # 128/384/512, three convs a group
 
 
 def test_result_contract(built):
@@ -75,31 +75,34 @@ def test_policy_augmentation_and_adamw(built, augment):
 
 
 def test_policy_operations_keep_range_and_shape():
-    import torch
+    import jax
+    import jax.numpy as jnp
 
     from cifarq import augment
 
-    x = torch.rand(64, 3, 32, 32)
+    x = jax.random.uniform(jax.random.key(0), (64, 32, 32, 3))
     for name in augment.OPS:
-        v = augment._strength(name, torch.rand(64), True)
+        v = augment._strength(name, jax.random.uniform(jax.random.key(1), (64,)), True, jax.random.key(2))
         y = augment._op(name, x, v)
         assert y.shape == x.shape and float(y.min()) >= -1e-5 and float(y.max()) <= 1 + 1e-5, name
-    assert torch.equal(augment._op('identity', x, None), x)
-    same = augment._op('rotate', x, torch.zeros(64))
-    assert torch.allclose(same, x, atol=1e-5)
+    assert jnp.array_equal(augment._op('identity', x, None), x)
+    same = augment._op('rotate', x, jnp.zeros(64))
+    assert jnp.allclose(same, x, atol=1e-5)
 
 
 def test_flip_equivariant_groups_are_invariant_to_mirroring():
-    import torch
+    import jax
+    import jax.numpy as jnp
 
-    net = airbench.model((16, 32, 32), depth=2, flip_eq=1).eval()
-    x = torch.randn(4, 32, 8, 8)  # (the last group alone, on even-sized maps)
-    g3 = net[4]
-    feats, mirrored = g3(x), g3(x.flip(-1))
-    c = feats.shape[1] // 2
-    assert torch.allclose(mirrored[:, :c], feats[:, c:].flip(-1), atol=1e-4)  # mirroring swaps and mirrors the pair
-    pooled = net[5]
-    assert torch.allclose(pooled(feats), pooled(mirrored), atol=1e-4)
+    net = airbench.model((16, 32, 32), depth=2, flip_eq=1)
+    net.eval()
+    x = jax.random.normal(jax.random.key(0), (4, 8, 8, 32))  # (the last group alone, on even-sized maps)
+    g3 = net.groups[2]
+    feats, mirrored = g3(x), g3(x[:, :, ::-1])
+    c = feats.shape[-1] // 2
+    assert jnp.allclose(mirrored[..., :c], feats[..., c:][:, :, ::-1], atol=1e-4)  # mirroring swaps and mirrors the pair
+    pooled = net.gpool
+    assert jnp.allclose(pooled(feats), pooled(mirrored), atol=1e-4)
 
 
 @pytest.mark.parametrize(

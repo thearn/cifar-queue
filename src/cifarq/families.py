@@ -12,11 +12,19 @@ starts from (as ``trial.params``); ``CALIBRATE[family]`` a short training to tim
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
+    from typing import Any
+
+    import optuna
+
 TRAIN = 'cifarq.airbench:train'
 TRAIN_TWO_SEEDS = 'cifarq.families:train_two_seeds'
 
 
-def train_two_seeds(data: str | None = None, report=None, **hp) -> dict:
+def train_two_seeds(data: str | None = None, report: Any = None, **hp) -> dict:
     """A search trial on two seeds (session 2026-10-30-equivariant-small, PLAN §2.1): seed 0 trains with the study's
     early stopping (its curve is the one the pruner sees); a survivor trains again at seed 1, unpruned; the value is
     the mean validation accuracy. The test set stays sealed. One seed's search values ran 0.2-0.5 pp optimistic in
@@ -39,7 +47,7 @@ def train_two_seeds(data: str | None = None, report=None, **hp) -> dict:
     }
 
 
-def recipe(trial, max_epochs: float = 40, kd: str = '') -> dict:
+def recipe(trial: optuna.Trial, max_epochs: float = 40, kd: str = '') -> dict:
     s, c = trial.suggest_float, trial.suggest_categorical
     p = {
         'epochs': s('epochs', 20.0, max_epochs),
@@ -69,7 +77,7 @@ def recipe(trial, max_epochs: float = 40, kd: str = '') -> dict:
     return p
 
 
-def airbench_space(trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
+def airbench_space(trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
     c = trial.suggest_categorical
     p = {
         'arch': 'airbench',
@@ -83,13 +91,13 @@ def airbench_space(trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str 
     return {**p, **recipe(trial, max_epochs, kd), 'param_cap': cap}
 
 
-def resnet9_space(trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
+def resnet9_space(trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
     c = trial.suggest_categorical
     p = {'arch': 'resnet9', 'arch_kw': {'width': c('width', [16, 20, 24, 28, 32, 35]), 'activation': c('activation', ['relu', 'gelu', 'celu'])}}
     return {**p, **recipe(trial, max_epochs, kd), 'param_cap': cap}
 
 
-def convmixer_space(trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
+def convmixer_space(trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
     c = trial.suggest_categorical
     p = {
         'arch': 'convmixer',
@@ -103,7 +111,7 @@ def convmixer_space(trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str
     return {**p, **recipe(trial, max_epochs, kd), 'param_cap': cap}
 
 
-def pyramidnet_space(trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
+def pyramidnet_space(trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
     """PyramidNet (M2: depth 110, alpha 48, 1.77 M, 95.18 % val untuned): blocks a stage (depth 6n + 2, or 9n + 2
     with bottlenecks), the widening alpha."""
     c = trial.suggest_categorical
@@ -115,7 +123,9 @@ def pyramidnet_space(trial, cap: int = 2_000_000, max_epochs: float = 40, kd: st
     return {**p, **recipe(trial, max_epochs, kd), 'param_cap': cap}
 
 
-def eqairbench_space(trial, cap: int = 2_000_000, max_epochs: float = 100, kd: str = '', lows=(96, 96, 112)) -> dict:
+def eqairbench_space(
+    trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 100, kd: str = '', lows: tuple[int, int, int] = (96, 96, 112)
+) -> dict:
     """Session 2026-10-30-equivariant-small, M5: the flip-equivariant airbench (depth 3; the last 1 or 2 groups
     equivariant, M3's winner), structured receptive fields on or off (M4's one non-negative lever), widths under the
     cap, and the recipe around the finalist's at a fixed ``max_epochs`` (E*). Scored at one view (``tta_level`` 0;
@@ -288,7 +298,7 @@ AB96_45K = {
 }
 
 
-def front_space(trial, kd: str = '') -> dict:
+def front_space(trial: optuna.Trial, kd: str = '') -> dict:
     """``eqairbench_space`` with the front's widths; a point over the parameter cap is refused here (raised as
     ``optuna.TrialPruned``: told pruned by runq with no job, so the sampler still learns the boundary), as the trainer
     would refuse it at step 0 after a job's round trip (phase B, 2026-11-05: 3 of 12 trials)."""
@@ -297,7 +307,7 @@ def front_space(trial, kd: str = '') -> dict:
     from .airbench import DEFAULTS, build, param_counts
 
     p = eqairbench_space(trial, max_epochs=100, kd=kd, lows=FRONT_LOWS)
-    stored = param_counts(build({**DEFAULTS, **p})[0])['stored']
+    stored = param_counts(build({**DEFAULTS, **p}, abstract=True)[0])['stored']
     trial.set_user_attr('params', stored)
     if stored > p['param_cap']:
         raise optuna.TrialPruned(f'{stored} parameters, over the cap of {p["param_cap"]}')
@@ -305,21 +315,21 @@ def front_space(trial, kd: str = '') -> dict:
 
 
 def macs_of(params: dict) -> int:
-    """MACs a view of the network ``params`` describes (built on the CPU, untrained: well under a second)."""
+    """MACs a view of the network ``params`` describes (traced from its shapes, nothing allocated or run)."""
     from .airbench import DEFAULTS, build
     from .footprint import count_macs
 
-    net, _ = build({**DEFAULTS, **params})
+    net, _ = build({**DEFAULTS, **params}, abstract=True)
     return int(count_macs(net))
 
 
-def train_front(data: str | None = None, report=None, **hp) -> dict:
+def train_front(data: str | None = None, report: Any = None, **hp) -> dict:
     """A front trial: ``train_two_seeds`` plus its MACs a view (the second objective, exact, not trained for)."""
     r = train_two_seeds(data, report=report, **hp)
     return {**r, 'macs': macs_of(hp)}
 
 
-def front_seeds(results) -> list[dict]:
+def front_seeds(results: str | Path) -> list[dict]:
     """Completed trials for the front study from the session's saved runs (its M5 study was cleaned away; these
     survive with full parameters and per-seed scores): M6's confirmations (seeds 0-1, as ``train_two_seeds``) and,
     where a configuration has none, its retraining (seeds 1-3). Each: {params in ``front_space``'s names, values

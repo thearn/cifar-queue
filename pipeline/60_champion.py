@@ -2,12 +2,14 @@
 as jobs, each saving its network (train(save='model'), in its job's directory, which comes back with the job); the
 seed with the median validation accuracy is the champion (chosen on validation, never on test), copied to
 results/models/<time>/. The spread over seeds says how far the search's lead over Page's recipe is seed noise: report
-it with the result.
+it with the result. The seeds train together as one job (``train.train_seeds``: one program vmapped over the seeds,
+on one card); ``--separate`` makes a job of each seed instead (to spread them over several targets).
 
     python pipeline/60_champion.py --seeds 5                             # the best trial of results/tune-study.db
     python pipeline/60_champion.py --storage results/distributed-study.db --seeds 5     # mode 3's study
     python pipeline/60_champion.py --reference --seeds 5                 # Page's recipe the same way, for the comparison
-    python pipeline/60_champion.py --targets local colab:cifar-l4a colab:cifar-l4b      # the 4060 and two L4s
+    python pipeline/60_champion.py --params results/g4-best.json --seeds 3 --targets colab:cifar-g4   # a file's parameters
+    python pipeline/60_champion.py --separate --targets local colab:cifar-l4a colab:cifar-l4b      # a job a seed
 """
 
 import argparse
@@ -41,23 +43,32 @@ if __name__ == '__main__':
     ap.add_argument('--storage', type=Path, default=RESULTS / 'tune-study.db', help='the study database (SQLite file)')
     ap.add_argument('--study', default=None, help='a study in it (default: the one with the best trial)')
     ap.add_argument('--reference', '--page', action='store_true', help="Page's recipe instead of the study's best")
+    ap.add_argument('--params', type=Path, help="a JSON file of train's arguments instead of the study's best")
+    ap.add_argument('--separate', action='store_true', help='a job a seed, instead of one job training them all together')
     sets_arg(ap)  # (overrides: --set epochs=30)
     targets_arg(ap)
     a = ap.parse_args()
     search = None  # the search's own run of these parameters (seed 0)
     if a.reference:
         source, params = 'tune.REFERENCE', tune.REFERENCE
+    elif a.params:  # (train's arguments already, not a trial's)
+        source, params = str(a.params), json.loads(a.params.read_text())
     else:
         db = a.storage if a.storage.is_absolute() else (ROOT / a.storage).resolve()
         source, params, search = best_params(f'sqlite:///{db}', a.study)
-    params = {**tune.train_params(params), **parse_sets(a.set)}
+    params = {**(params if a.params else tune.train_params(params)), **parse_sets(a.set)}
     targets = stage_targets('champion', a.targets)
     print(f'{source}: {a.seeds} seeds over {targets}', flush=True)
+    data = str(dataset_file())
     with executor('champion', targets, data=[dataset_file()], **tune.job_options(params)) as ex:
-        futures = [ex.submit(tune.TRAIN, data=str(dataset_file()), save='model', **{**params, 'seed': s}) for s in range(a.seeds)]
+        if a.separate:
+            futures = [(f, None) for f in (ex.submit(tune.TRAIN, data=data, save='model', **{**params, 'seed': s}) for s in range(a.seeds))]
+        else:
+            one = ex.submit(tune.TRAIN_SEEDS, seeds=list(range(a.seeds)), data=data, save='model', **{k: v for k, v in params.items() if k != 'seed'})
+            futures = [(one, s) for s in range(a.seeds)]
         runs = []
-        for s, f in enumerate(futures):
-            r = f.result()
+        for s, (f, i) in enumerate(futures):
+            r = f.result() if i is None else f.result()[i]
             runs.append(
                 {
                     'seed': s,
@@ -69,7 +80,7 @@ if __name__ == '__main__':
                     'device': r['device'],
                 }
             )
-            print(f'seed {s}: val {r["val_acc"]:.4f} test {r["test_acc"]:.4f} ({r["device"]})', flush=True)
+            print(f'seed {s}: val {r["val_acc"]:.4f} test {r["test_acc"]:.4f} ({r["device"]}, {r["train_seconds"]} s)', flush=True)
     ranked = sorted(runs, key=lambda r: r['val_acc'])
     chosen = ranked[(len(ranked) - 1) // 2]
     model_dir = RESULTS / 'models' / time.strftime('%Y%m%d-%H%M%S')

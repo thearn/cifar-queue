@@ -14,6 +14,8 @@ cifar-a100 = { gpu = "A100", idle_minutes = 1 }
 # layers missing there are copied in from GCS by the VM) and a Compute Engine spot L4; each VM stops itself after 15
 # idle minutes
 front-rp = { provider = "sky", gpu = "RTX4090,RTXA5000,A40,L4", infra = "runpod", spot = false, store = "r2", idle_minutes = 3, vm_idle_min = 10 }
+cifar-rp6000 = { provider = "sky", gpu = "RTXPRO6000", infra = "runpod", spot = false, store = "r2", idle_minutes = 3, vm_idle_min = 10 }   # the G4's card (RTX PRO 6000) on RunPod, when Colab has no G4 (2026-11-09)
+cifar-vast6k = { provider = "vast", gpu = "RTXPRO6000S,RTXPRO6000WS", store = "r2", max_usd_h = 2.5, idle_minutes = 3, vm_idle_min = 10 }   # the G4's card on Vast, server or workstation edition (Colab and RunPod had none, 2026-11-09)
 front-l4 = { provider = "gce", gpu = "L4", idle_minutes = 3, vm_idle_min = 10 }
 front-vast = { provider = "vast", gpu = "RTX4090,RTX3090,RTXA5000,RTXA4000", store = "r2", idle_minutes = 3, vm_idle_min = 10 }
 front-lam = { provider = "sky", gpu = "A10,RTX6000,A6000", infra = "lambda", spot = false, store = "r2", idle_minutes = 3, vm_idle_min = 10 }
@@ -36,7 +38,7 @@ targets = { local = 1 }
 gpu_mb = 3000
 host_mb = 6000
 minutes = 5
-worker = { preload = ["torch", "numpy", "cifarq.airbench", "cifarq.families", "cifarq.methods", "cifarq.augment"] }   # forks of a persistent worker on a VM: no interpreter start or imports a trial (10-20 s each, 2026-11-05)
+worker = { preload = ["jax", "flax.nnx", "optax", "numpy", "cifarq.airbench", "cifarq.families", "cifarq.methods", "cifarq.augment"] }   # forks of a persistent worker on a VM: no interpreter start or imports a trial (10-20 s each, 2026-11-05); jax imported, no device touched before the fork
 
 [stages.tune_on_vm]                       # mode 2: a whole search inside one job (pipeline/55_tune_on_vm.py)
 targets = { "colab:cifar-l4a" = 1 }
@@ -49,7 +51,7 @@ targets = { local = 1 }
 gpu_mb = 3000
 host_mb = 6000
 minutes = 10
-worker = { preload = ["torch", "numpy", "cifarq.airbench", "cifarq.families", "cifarq.methods", "cifarq.augment"] }   # forks of a persistent worker on a VM: no interpreter start or imports a trial (10-20 s each, 2026-11-05)
+worker = { preload = ["jax", "flax.nnx", "optax", "numpy", "cifarq.train", "cifarq.data.dataset:warm"] }   # forks of a persistent worker on a VM; jax imported, no device touched before the fork
 
 [stages.pbt]                              # pipeline/tools/pbt_g4.py
 targets = { "colab:cifar-g4" = 1 }
@@ -62,4 +64,4 @@ targets = { "colab:cifar-g4" = 1, "colab:front-rp" = 1, "colab:front-l4" = 1 }
 gpu_mb = 20000
 host_mb = 12000
 minutes = 45
-worker = { preload = ["torch", "numpy", "cifarq.airbench", "cifarq.families", "cifarq.methods", "cifarq.augment"] }   # forks of a persistent worker on a VM: no interpreter start or imports a trial (10-20 s each, 2026-11-05)
+worker = { preload = ["jax", "flax.nnx", "optax", "numpy", "cifarq.airbench", "cifarq.families", "cifarq.methods", "cifarq.augment"] }   # forks of a persistent worker on a VM: no interpreter start or imports a trial (10-20 s each, 2026-11-05); jax imported, no device touched before the fork

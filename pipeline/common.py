@@ -116,7 +116,9 @@ def provenance() -> dict:
         r = subprocess.run(['git', '-C', str(ROOT), *args], capture_output=True, text=True)
         return r.stdout.strip() if r.returncode == 0 else None
 
-    import torch
+    import flax
+    import jax
+    import optax
 
     import cifarq
 
@@ -126,7 +128,9 @@ def provenance() -> dict:
         'dirty': bool(git('status', '--porcelain', '--untracked-files=no')),
         'dataset': ds.get('sha256'),
         'package': cifarq.__version__,
-        'torch': torch.__version__,
+        'jax': jax.__version__,
+        'flax': flax.__version__,
+        'optax': optax.__version__,
         'python': sys.version.split()[0],
         'argv': sys.argv,
     }
