@@ -55,7 +55,7 @@ batch-norm refresh, unrolled over 25 batches, compiled as long as a training epo
    fewer host syncs; and 1, 2 and 6 trainings at once on the card. **Scheduling:** the GPU is shared with another
    session's solves; `runq exclusive` pauses the whole `gpu` group while it waits (it held back that session's next
    solve on 2026-11-09 and was cancelled), so either wait for that queue to drain, slip the jobs between two of its
-   solves with its owner's agreement, or rent a 5070 Ti on Vast (about $0.16 an hour).
+   solves with its owner's agreement, or rent a 5070 Ti on Vast (about $0.16 an hour). Not decided yet: ask the user which.
 2. **The airbench family on a GPU** (Torch references from the session ledgers): `pipeline/tools/seeds.py JX-E1.2-45k
    --preset airbench94 --seeds 0 1 2` (Torch 93.70 % test, 6 views); `JX-E1.1-45k --preset airbench96 --seeds 0 1 2`
    (95.87 +- 0.04 %); airbench94 on train+val, 2 seeds (94.01-94.11 %); `tests/test_equivariance.py::
@@ -72,7 +72,8 @@ batch-norm refresh, unrolled over 25 batches, compiled as long as a training epo
    version stays in the repository's history).
 7. **runq findings to fix there:** a Vast allocation that was still in progress when its job was cancelled rented a VM
    that nothing held (destroyed by hand after about 10 minutes); `runq exclusive` cannot wait for an idle card without
-   pausing everyone else's queue.
+   pausing everyone else's queue. `runq budget` showed Vast at $0.00 after about $3.30 of Vast VMs that day (the
+   search VM in Sweden $1.42 an hour for 105 minutes, two parity VMs, the stray one).
 
 ## Not done on purpose
 
