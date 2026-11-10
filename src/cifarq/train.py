@@ -132,7 +132,7 @@ def augment(key: jax.Array, x: jax.Array, h: dict, hp: dict) -> jax.Array:
     from . import jx
 
     n = x.shape[0]
-    keys = iter(jax.random.split(key, 10))
+    keys = iter(jax.random.split(key, 12))  # (11 drawn with every augmentation on; 10 raised StopIteration while tracing)
     u = lambda: jax.random.uniform(next(keys), (n,), minval=-1.0, maxval=1.0)  # one per image
     col = lambda v: v[:, None, None, None]
     if h['aug_brightness'] or h['aug_contrast'] or h['aug_saturation']:
@@ -209,6 +209,9 @@ class Run:
         classes = len(arrays['classes'])
         put = lambda a: jax.device_put(np.asarray(a), self.dev)
         x_train, y_train = put(arrays['x_train']), put(arrays['y_train'].astype(np.int32))
+        # (the training set reaches the compiled programs as arguments: closed over, it was baked into each program as
+        # a 138 MB constant, which slowed every compilation and filled the persistent cache)
+        self.x_train, self.y_train = x_train, y_train
         self.x = {s: put(arrays[f'x_{s}']) for s in ('val', 'test')}
         self.y = {s: np.asarray(arrays[f'y_{s}']) for s in ('val', 'test')}
         with jax.default_device(self.dev):
@@ -253,11 +256,11 @@ class Run:
         norm = lambda xb: (xb - jnp.asarray(MEAN)) / jnp.asarray(STD)
         mixing = h['mix'] != 'none'
 
-        def step(carry: dict, idx: jax.Array, hp: dict) -> tuple[dict, jax.Array]:
+        def step(carry: dict, idx: jax.Array, hp: dict, x_data: jax.Array, y_data: jax.Array) -> tuple[dict, jax.Array]:
             params, rest, opt, key, n = carry['params'], carry['rest'], carry['opt'], carry['key'], carry['n']
             key, ka, km = jax.random.split(jax.random.wrap_key_data(key), 3)
-            xb = augment(ka, x_train[idx].astype(jnp.float32) / 255, h, hp)
-            yb = y_train[idx]
+            xb = augment(ka, x_data[idx].astype(jnp.float32) / 255, h, hp)
+            yb = y_data[idx]
             if mixing:
                 xb, other, lam = _mix(km, xb, h, hp)
 
@@ -278,14 +281,14 @@ class Run:
                 new['ema'] = jx.ema_update(carry['ema'], (params, rest), n, hp['ema_decay'])
             return new, loss
 
-        def epoch(carry: dict, hp: dict) -> tuple[dict, jax.Array]:
+        def epoch(carry: dict, hp: dict, x_data: jax.Array, y_data: jax.Array) -> tuple[dict, jax.Array]:
             key, kp = jax.random.split(jax.random.wrap_key_data(carry['key']))
             carry = {**carry, 'key': jax.random.key_data(key)}
-            perm = jax.random.permutation(kp, y_train.shape[0])[: steps * bs].reshape(steps, bs)
-            carry, losses = jax.lax.scan(lambda c, i: step(c, i, hp), carry, perm)
+            perm = jax.random.permutation(kp, y_data.shape[0])[: steps * bs].reshape(steps, bs)
+            carry, losses = jax.lax.scan(lambda c, i: step(c, i, hp, x_data, y_data), carry, perm)
             return carry, losses.mean()
 
-        def refresh(params: Any, rest: Any) -> Any:
+        def refresh(params: Any, rest: Any, x_data: jax.Array) -> Any:
             """Schedule-free: batch norm's statistics refreshed for the averaged weights (a few training batches, no
             gradients), as the method's authors advise for networks with batch norm. A scan over the batches: one
             forward pass compiled, not 25 unrolled (which compiled as long as a whole training epoch)."""
@@ -293,18 +296,18 @@ class Run:
             idx = jnp.arange(n * bs).reshape(n, bs)
 
             def one(r: Any, i: jax.Array) -> tuple[Any, None]:
-                return S.apply(params, r, norm(x_train[i].astype(jnp.float32) / 255), train=True)[1], None
+                return S.apply(params, r, norm(x_data[i].astype(jnp.float32) / 255), train=True)[1], None
 
             return jax.lax.scan(one, rest, idx)[0]
 
-        def weights(st: dict) -> tuple[Any, Any]:
+        def weights(st: dict, x_data: jax.Array) -> tuple[Any, Any]:
             if self.schedule_free:
                 p = jx.eval_params(st['opt'], st['params'], True)
-                return p, refresh(p, st['rest'])
+                return p, refresh(p, st['rest'], x_data)
             return st['ema'] if use_ema else (st['params'], st['rest'])
 
-        self._epoch = jax.jit(jax.vmap(epoch, in_axes=(0, None)), donate_argnums=0)
-        self._weights = jax.jit(jax.vmap(weights))
+        self._epoch = jax.jit(jax.vmap(epoch, in_axes=(0, None, None, None)), donate_argnums=0)
+        self._weights = jax.jit(jax.vmap(weights, in_axes=(0, None)))
         self.done, self._w = 0, None
 
     def set(self, **floats) -> None:
@@ -319,14 +322,14 @@ class Run:
     def epoch(self) -> np.ndarray:
         import numpy as np
 
-        self.st, loss = self._epoch(self.st, self.hp)
+        self.st, loss = self._epoch(self.st, self.hp, self.x_train, self.y_train)
         self.done += 1
         self._w = None
         return np.asarray(loss)
 
     def weights(self) -> tuple[Any, Any]:
         if self._w is None:
-            self._w = self._weights(self.st)
+            self._w = self._weights(self.st, self.x_train)
         return self._w
 
     def seed_weights(self, i: int) -> tuple[Any, Any]:

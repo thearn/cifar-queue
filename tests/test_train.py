@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from conftest import SMALL
 
-from cifarq import evaluate, train
+from cifarq import evaluate, jx, train
 from cifarq.hub import ResNet9
 
 
@@ -58,3 +58,36 @@ def test_seeds_in_one_program_are_separate_trainings(built):
     a, b, c = train.train_seeds([1, 1, 0], together=True, **h)
     assert loss(a) == loss(b) and a['test_acc'] == b['test_acc'] and loss(a) != loss(c)
     assert [r['hyperparameters']['seed'] for r in (a, b, c)] == [1, 1, 0]
+
+
+@pytest.mark.parametrize('optimizer', ['sgd', 'sgd_sf'])
+def test_the_training_set_is_an_argument_not_a_constant(built, optimizer):
+    """Closed over, the training set was baked into the compiled epoch and weights programs (138 MB each on CIFAR)."""
+    run = train.Run(train._check({**SMALL, 'epochs': 1, 'optimizer': optimizer}), [0], device='cpu')
+    data = run.x_train.nbytes
+    epoch = run._epoch.lower(run.st, run.hp, run.x_train, run.y_train).as_text()
+    weights = run._weights.lower(run.st, run.x_train).as_text()
+    assert len(epoch) < data and len(weights) < data
+
+
+def test_maximal_augmentation_has_enough_rng_keys():
+    import jax
+    import jax.numpy as jnp
+
+    h = train._check(
+        {
+            'aug_brightness': 0.1,
+            'aug_contrast': 0.1,
+            'aug_saturation': 0.1,
+            'aug_translate': 2.0,
+            'aug_rotate': 5.0,
+            'aug_scale': 0.1,
+            'aug_flip': 0.5,
+            'cutout_size': 4,
+            'cutout_prob': 0.5,
+        }
+    )
+    x = jax.random.uniform(jax.random.key(0), (2, 8, 8, 3))
+    out = train.augment(jax.random.key(1), x, h, jx.dynamic(h, train.DYNAMIC))
+    assert out.shape == x.shape
+    assert jnp.all(jnp.isfinite(out))
