@@ -222,14 +222,15 @@ def _checkpoint(db: Path, out: Path):
     tmp.replace(out)
 
 
-def _minutes_to(study, levels) -> dict:
-    """{level: minutes from the first trial's start to the first completed trial reaching it, or None}."""
+def _minutes_to(study, levels, origin: float | None = None) -> dict:
+    """{level: minutes from ``origin`` (a time.time(); default the first trial's start) to the first completed trial
+    reaching it, or None}."""
     done = sorted((t for t in study.trials if t.state.name == 'COMPLETE' and t.datetime_complete), key=lambda t: t.datetime_complete)
-    starts = [t.datetime_start for t in study.trials if t.datetime_start]
+    starts = [t.datetime_start.timestamp() for t in study.trials if t.datetime_start]
     if not done or not starts:
         return {str(l): None for l in levels}
-    t0 = min(starts)
-    return {str(l): next((round((t.datetime_complete - t0).total_seconds() / 60, 1) for t in done if t.value >= l), None) for l in levels}
+    t0 = min(starts) if origin is None else origin
+    return {str(l): next((round((t.datetime_complete.timestamp() - t0) / 60, 1) for t in done if t.value >= l), None) for l in levels}
 
 
 def _best_by_time(study) -> list:
@@ -387,6 +388,8 @@ def on_vm(
         # minutes from the search's start to its first trial at 92 % and at 93 % (a cold start's measure: less luck
         # than the best value alone)
         'minutes_to': _minutes_to(study, (0.92, 0.93) if family == 'b0' else (0.94, 0.95, 0.955, 0.96)),
+        # the same from the job's start (calibration and study set-up included): what a cold search costs in all
+        'campaign_minutes_to': _minutes_to(study, (0.92, 0.93) if family == 'b0' else (0.94, 0.95, 0.955, 0.96), t0),
         'family': family,
         'cap': cap if family != 'b0' else None,
         'max_epochs': max_epochs if family != 'b0' else None,
@@ -405,6 +408,7 @@ def on_vm(
         'calibration': table,
         'calibration_seconds': round(t_cal, 1),
         'search_seconds': round(time.time() - t0 - t_cal, 1),
+        'campaign_seconds': round(time.time() - t0, 1),
         'device': best.user_attrs.get('device'),
     }
     Path('summary.json').write_text(json.dumps(out, indent=1) + '\n')
