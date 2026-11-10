@@ -1,10 +1,10 @@
 # cifar-queue
 
-This repository is a test problem for runq, my compute queue library (not public at the moment). runq is a thin wrapper that takes local and cloud GPUs and CPUs from a mix of sources (here a local RTX 4060 and Colab VMs) and presents them as one compute pool, so that HPC and ML workflows can be submitted as ordinary function calls without caring where they run. It handles environment and code sync, sending only what changed to storage buckets in the same cloud region as the compute to avoid egress costs, and copying between regions only when a job needs it. It is close to a mix of existing queue managers, but handles my own particular needs.
+This repository is a test problem for runq, my compute queue library (not public at the moment). runq is a thin wrapper that takes local and cloud GPUs and CPUs from a mix of sources (here a local RTX 5070 Ti, Colab VMs and rented cards) and presents them as one compute pool, so that HPC and ML workflows can be submitted as ordinary function calls without caring where they run. It handles environment and code sync, sending only what changed to storage buckets in the same cloud region as the compute to avoid egress costs, and copying between regions only when a job needs it. It is close to a mix of existing queue managers, but handles my own particular needs.
 
 I plan to push and update my test models publicly. The code is on GitHub ([thearn/cifar-queue](https://github.com/thearn/cifar-queue)) and the trained model on the Hugging Face hub ([thearn/cifar10-resnet9](https://huggingface.co/thearn/cifar10-resnet9)), which holds a snapshot of this repository at each publish.
 
-This one is a small CNN trained on CIFAR-10 and tuned with Optuna. It was chosen because it has a well-known reference benchmark, and it exercises everything an ML workload needs from the queue: shipping a Python environment and a dataset to remote GPUs, running training as function calls, and spreading a hyperparameter search over several GPUs at once.
+This one is a small CNN trained on CIFAR-10 and tuned with Optuna, written in JAX (Flax NNX for the networks, Optax for the optimisers) since 2026-11-09; the results below dated earlier were measured with the PyTorch version, whose last commit is `f7ab6f5`. It was chosen because it has a well-known reference benchmark, and it exercises everything an ML workload needs from the queue: shipping a Python environment and a dataset to remote GPUs, running training as function calls, and spreading a hyperparameter search over several GPUs at once.
 
 ## Using the model
 
@@ -16,10 +16,12 @@ net = ResNet9.from_pretrained('thearn/cifar10-resnet9')
 probs = net.predict(images)              # uint8 (n, 32, 32, 3) RGB -> (n, 10); net.classes names the columns
 ```
 
-To train one model yourself (the defaults at 16 epochs train in under a minute on an L4 and reach about 88 %, while the published settings take about 6 minutes on an RTX 4060; without a GPU it runs on the CPU, slowly):
+The hub still holds the PyTorch network (published 2026-10-28), which the JAX code here does not load; until a JAX champion is published, install from the hub (its snapshot is the code that trained it) to use it.
+
+To train one model yourself (on an RTX 5070 Ti the defaults at 16 epochs take about 20 s and reach about 88 %, and the search's best configuration, `results/g4-best.json`, about a minute for 94.6 % test; the first training in a process compiles for 5-10 s, later ones read the persistent cache; without a GPU it runs on the CPU, slowly):
 
 ```bash
-pip install -e '.[train]'
+pip install -e '.[train,cuda]'
 python pipeline/10_ingest.py && python pipeline/20_clean.py --targets direct && python pipeline/30_dataset.py
 python -c "from cifarq.train import train; print(train(epochs=16, save='model')['test_acc'])"
 ```
@@ -36,7 +38,7 @@ Note that the logit scaling matters more than it looks. At 4 epochs, scaling the
 
 ## Running on the queue
 
-The pipeline below needs runq, so it documents how the results were produced rather than something you can run today. A few of its terms are used throughout. A **job** is one Python function call (here `cifarq.train.train` with its hyperparameters) that the queue runs on whichever machine it places it: the local GPU, or a Colab VM it starts and stops as needed (an **executor**; `configs/compute.toml` names them: two L4s, a G4 and an A100). Each job gets its own directory, and whatever the function writes there comes back when it finishes. The queue copies the submitting Python environment to a VM once and caches it, sends only changed source files with each job, and sends the dataset file once per VM, keyed by its hash.
+The pipeline below needs runq, so it documents how the results were produced rather than something you can run today. A few of its terms are used throughout. A **job** is one Python function call (here `cifarq.train.train` with its hyperparameters) that the queue runs on whichever machine it places it: the local GPU, or a Colab VM it starts and stops as needed (an **executor**; `configs/compute.toml` names them: Colab L4s, G4 and A100, and rented cards on RunPod, Vast and Lambda). Each job gets its own directory, and whatever the function writes there comes back when it finishes. The queue copies the submitting Python environment to a VM once and caches it, sends only changed source files with each job, and sends the dataset file once per VM, keyed by its hash.
 
 The layout is that of [ml-queue-template](../ml-queue-template) (`.copier-answers.yml`): one script per stage in `pipeline/`, where each stage runs set in `configs/compute.toml` (`--targets` overrides it for one run), and every run writes a record to `results/<stage>/<time>.json` with its commit and dataset hash.
 
@@ -44,28 +46,28 @@ The layout is that of [ml-queue-template](../ml-queue-template) (`.copier-answer
 |---|---|
 | `10_ingest.py`, `20_clean.py`, `30_dataset.py` | the hub's parquet files at a pinned revision, decoded, split; manifests in `data/manifests/` (committed) |
 | `40_train.py` | one training (mode 1: `--targets colab:cifar-l4a --set epochs=16`) |
-| `50_tune.py` | mode 3: Optuna here, each trial a job on the 4060 and the L4s at once |
+| `50_tune.py` | mode 3: Optuna here, each trial a job on the local GPU and the L4s at once |
 | `55_tune_on_vm.py` | mode 2: a whole Optuna (or Ray Tune) search inside one job on one card, its trials as processes there; it uses the card's stored concurrency or measures and stores it, stops trials early through the study (`--pruner rungs`, chosen from this model's curves), and checkpoints the study as it runs. On a G4 the fastest and best way to search here (`docs/PLAN-mode2.md`) |
 | `60_champion.py` | the best trial trained again over seeds, the median seed by validation kept |
 | `70_publish.py` | the code at HEAD, the champion's network and the model card (`pipeline/card.md`) to the hub; `--dry-run` first |
 | `tools/` | `watch.py` (follow a search), `rung_check.py` (choose early stopping), `conformal_check.py`, `pbt_g4.py`; for the autoresearch sessions below, `seeds.py` and `grid.py` (configurations over seeds as jobs), `fit_rungs.py`, `footprint_bench.py` (parameters, bytes, MACs, latency and memory against a reference), `compare_b0.py` (the win rule), `open_test.py` (one logged look at the test set), `watch_session.py` |
 
 ```bash
-uv venv ~/.venvs/cifarq --python 3.12      # a uv or conda Python: a VM cannot rebuild the system one
-uv pip install --python ~/.venvs/cifarq/bin/python -e '.[train,sf,test]' -e ../../runq[gcs]
-~/.venvs/cifarq/bin/python pipeline/10_ingest.py && ~/.venvs/cifarq/bin/python pipeline/20_clean.py && ~/.venvs/cifarq/bin/python pipeline/30_dataset.py
-~/.venvs/cifarq/bin/python pipeline/40_train.py --targets colab:cifar-l4a --set epochs=16          # mode 1
-~/.venvs/cifarq/bin/python pipeline/55_tune_on_vm.py --target colab:cifar-g4 --trials 600 --minutes 45 --pruner rungs
+uv venv ~/.venvs/cifarq-jax --python 3.12      # a uv or conda Python: a VM cannot rebuild the system one
+uv pip install --python ~/.venvs/cifarq-jax/bin/python -e '.[train,cuda,test]' -e ../../runq[gcs]
+~/.venvs/cifarq-jax/bin/python pipeline/10_ingest.py && ~/.venvs/cifarq-jax/bin/python pipeline/20_clean.py && ~/.venvs/cifarq-jax/bin/python pipeline/30_dataset.py
+~/.venvs/cifarq-jax/bin/python pipeline/40_train.py --targets colab:cifar-l4a --set epochs=16          # mode 1
+~/.venvs/cifarq-jax/bin/python pipeline/55_tune_on_vm.py --target colab:cifar-g4 --trials 600 --minutes 45 --pruner rungs
                                            # mode 2: a whole search in one G4 job (--driver ray, --cold --seed N for comparisons)
-~/.venvs/cifarq/bin/python pipeline/tools/rung_check.py         # where early stopping is safe, from complete curves
-~/.venvs/cifarq/bin/python pipeline/tools/pbt_g4.py             # probe (seeds, batches, concurrency) and PBT on a G4
-~/.venvs/cifarq/bin/python pipeline/50_tune.py --trials 80 --targets local colab:cifar-l4a colab:cifar-l4b # mode 3
-~/.venvs/cifarq/bin/python pipeline/60_champion.py --seeds 5
-~/.venvs/cifarq/bin/python pipeline/70_publish.py --dry-run && ~/.venvs/cifarq/bin/python pipeline/70_publish.py --no-space
-~/.venvs/cifarq/bin/python -m pytest       # CPU tests on a tiny synthetic CIFAR; RUN_QUEUE_TESTS=1 adds one job through the daemon
+~/.venvs/cifarq-jax/bin/python pipeline/tools/rung_check.py         # where early stopping is safe, from complete curves
+~/.venvs/cifarq-jax/bin/python pipeline/tools/pbt_g4.py             # probe (seeds, batches, concurrency) and PBT on a G4
+~/.venvs/cifarq-jax/bin/python pipeline/50_tune.py --trials 80 --targets local colab:cifar-l4a colab:cifar-l4b # mode 3
+~/.venvs/cifarq-jax/bin/python pipeline/60_champion.py --seeds 5
+~/.venvs/cifarq-jax/bin/python pipeline/70_publish.py --dry-run && ~/.venvs/cifarq-jax/bin/python pipeline/70_publish.py --no-space
+~/.venvs/cifarq-jax/bin/python -m pytest       # CPU tests on a tiny synthetic CIFAR; RUN_QUEUE_TESTS=1 adds one job through the daemon
 ```
 
-One training at a time was best on the L4, the 4060, the A100 and the G4 (two at once gave 6 % less on the G4); mode 2 runs two processes taking turns at the card instead, so one trial's set-up overlaps the other's training. To follow a run, `runq wait ID --grep trial` prints each trial as it ends (the runq skill). Colab allows two GPU VMs per account, so run mode 3 after mode 2 has released its VM. Trials return only their numbers, so no weights are kept from the search; `60_champion.py` trains the best parameters again with `train(save='model')`. `70_publish.py` refuses uncommitted changes and a champion trained on another dataset than the manifest names, and its hub commit names the local commit. The Gradio app in `app/` is not hosted, since a Gradio Space now needs a paid Hugging Face plan or ZeroGPU.
+With the PyTorch code one training at a time was best on the L4, the 4060, the A100 and the G4 (two at once gave 6 % less on the G4); with JAX the RTX PRO 6000 (the G4's card) gains from up to six at once (0.98 trainings a second against 0.79 at three), so mode 2 measures each card's count and stores it, or takes `--concurrent`. Mode 2 also lets two processes take turns at the card, so one trial's set-up overlaps the other's training. To follow a run, `runq wait ID --grep trial` prints each trial as it ends (the runq skill). Colab allows two GPU VMs per account, so run mode 3 after mode 2 has released its VM. Trials return only their numbers, so no weights are kept from the search; `60_champion.py` trains the best parameters again with `train(save='model')`. `70_publish.py` refuses uncommitted changes and a champion trained on another dataset than the manifest names, and its hub commit names the local commit. The Gradio app in `app/` is not hosted, since a Gradio Space now needs a paid Hugging Face plan or ZeroGPU.
 
 To follow a search, `pipeline/tools/watch.py` (mode 3's study) or `--mode2` (the running mode 2 job's study, copied back every two minutes), or `uvx optuna-dashboard sqlite:///results/tune-study.db`. To resume a dead search, pass `--resume`: mode 3 reattaches the trials left in flight to their jobs, and mode 2 sends the last copied study to a new job. Completed trials are never re-run. All output goes to `results/` (not committed).
 
@@ -156,6 +158,22 @@ The front, every trial and each point's complete training arguments are in `docs
 `trials.csv`, `front.svg`; `pipeline/tools/export_front.py` writes them again after more trials).
 
 ![front](docs/front/front.svg)
+
+## Results (2026-11-09/10): JAX against PyTorch
+
+The JAX port matches the PyTorch code's accuracy: the champion configuration over three seeds gives 94.58 +- 0.13 %
+test against 94.57 % (RTX PRO 6000). Full trainings on an RTX 5070 Ti, three seeds each, the same dataset:
+
+| Configuration | Steady epoch (PyTorch / JAX) | Whole training, warm cache | Test (PyTorch / JAX) |
+|---|---|---|---|
+| Defaults, 10 epochs | 0.87 / 0.81 s | 13.7 / 12.4 s | 85.26 / 85.15 % |
+| Page's recipe, 24 epochs | 2.22 / 2.19 s | 59.0 / 57.3 s | 93.16 / 93.16 % |
+| Champion, 30 epochs | 1.96 / 1.61 s | 65.2 / 56.3 s | 94.52 / 94.66 % |
+
+The JAX column is with the training set passed to the compiled programs as an argument (2026-11-10); closed over, it
+had been baked into each program as a 138 MB constant, which made compilation the one place PyTorch was ahead. Details,
+and what was tried and not kept (FP16 with loss scaling helped only on a T4, which has no native BF16), are in
+`docs/PLAN-jax.md`.
 
 ## References
 
