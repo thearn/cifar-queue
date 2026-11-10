@@ -1,16 +1,13 @@
-# Torch against JAX profiling (docs/PLAN-jax.md, step 1)
+# JAX profiling
 
-The same configurations (`configs.py`: the champion, Page's recipe, the defaults) on the same card, written to
-`results/profile/<framework>-<config>-<mode>.json`. Modes: `e2e` (4 epochs: first and steady epoch, images a second,
-peak memory), `components` (augment, forward, forward-backward, train step, evaluation at one batch), `trace` (GPU kernel
-time by name from `torch.profiler` / `jax.profiler`).
+The same configurations (`configs.py`: the champion, Page's recipe, the defaults) on one card, written to
+`results/profile/jax-<config>-<mode>.json`. Modes: `e2e` (4 epochs: first and steady epoch, images a second, peak
+memory), `components` (augment, forward, forward-backward, train step, evaluation at one batch), `trace` (GPU kernel
+time by name from `jax.profiler`).
 
-The Torch side runs the last Torch commit from a worktree, in the Torch venv:
-
-    git worktree add --detach ../cifar-torch f7ab6f5 && ln -s "$PWD/data/dataset" ../cifar-torch/data/dataset
-    ML_PROJECT_ROOT=../cifar-torch PYTHONPATH=../cifar-torch/src ~/.venvs/cifarq/bin/python pipeline/tools/profile/torch_prof.py champion e2e
     ~/.venvs/cifarq-jax/bin/python pipeline/tools/profile/jax_prof.py champion e2e
     ~/.venvs/cifarq-jax/bin/python pipeline/tools/profile/jax_prof.py champion components --tag cmdbuf --xla "--xla_gpu_enable_command_buffer=FUSION,CUBLAS,CUDNN"
 
-Run them with the GPU to themselves (not `runq exclusive` while another session's solves use the card: it pauses
-that session's queue).
+The Torch comparison these tools were written for is answered (docs/PLAN-jax.md, 2026-11-10); the last Torch code is
+commit `f7ab6f5`. Run them with the GPU to themselves (not `runq exclusive` while another session's solves use the
+card: it pauses that session's queue).

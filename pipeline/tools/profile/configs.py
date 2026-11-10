@@ -1,4 +1,4 @@
-"""Shared profiling configurations for the Torch and JAX harnesses (train's argument names)."""
+"""Shared profiling configurations for the JAX harness (train's argument names)."""
 
 import json
 from pathlib import Path
@@ -50,23 +50,3 @@ def write(name: str, rec: dict) -> Path:
     f.write_text(json.dumps(rec, indent=1, default=str) + '\n')
     print(json.dumps(rec, default=str)[:2000], flush=True)
     return f
-
-
-def kernel_table(events, top: int = 25) -> list[dict]:
-    """GPU kernel time by name from Chrome/Perfetto trace events (``ph`` X with a duration on a GPU stream)."""
-    agg = {}
-    for e in events:
-        if e.get('ph') != 'X' or 'dur' not in e:
-            continue
-        cat = str(e.get('cat', '')).lower()
-        name = str(e.get('name', ''))
-        if cat not in ('kernel', 'gpu_memcpy', 'gpu_memset') and not cat.startswith('kernel'):
-            continue
-        a = agg.setdefault(name[:120], [0.0, 0])
-        a[0] += float(e['dur'])
-        a[1] += 1
-    total = sum(v[0] for v in agg.values()) or 1.0
-    rows = sorted(
-        ({'kernel': k, 'ms': round(v[0] / 1e3, 2), 'calls': v[1], 'share': round(v[0] / total, 4)} for k, v in agg.items()), key=lambda r: -r['ms']
-    )
-    return [{'total_kernel_ms': round(total / 1e3, 1)}] + rows[:top]

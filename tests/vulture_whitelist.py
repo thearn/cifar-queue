@@ -34,7 +34,3 @@ hub.ResNet9._from_pretrained
 
 # a queue job names it as a string (tune.TRAIN_SEEDS: pipeline/60_champion.py)
 train.train_seeds
-
-# PyTorch reads it (the Torch profiling harness: cudnn picks its fastest convolution algorithms)
-torch = None
-torch.backends.cudnn.benchmark
