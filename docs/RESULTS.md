@@ -58,3 +58,14 @@ session's job for part of them, so the times are not clean.
 - **Mode 2 on the 4060** (`results/tune_on_vm/20261029-193227.json`): 2 trials, the study, progress and summary back
   with the job.
 - **Publish**: `70_publish.py --dry-run` staged the model repo and card; nothing uploaded.
+
+
+## 2026-11-10: a float16 path for the T4, and what a small network's arithmetic costs there
+
+A Tesla T4 (Turing, compute capability 7.5) runs bfloat16 off its tensor cores. Measured matmul throughput was fp32
+4.87, bf16 5.14 and fp16 26.28 TFLOP/s. `precision='auto'` (opt in) trains airbench94 in float16 on such a card,
+about 2.2x faster end to end. The full recipe over 5 seeds gave 93.78 % test (six views) in 24.9 s of training. On
+Ampere and newer cards it behaves the same as `'fp16'`. Gating six-view TTA on the one-view margin matched six views
+for every image (93.99 % test) in 66 % less wall time. That saving is not realized in the library yet. Shrinking the
+network's MACs gave no speedup on this card, and no architecture change was promoted. Summary:
+`docs/autoresearch/2026-11-10-fp16-t4/SUMMARY.md`.

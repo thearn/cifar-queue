@@ -1,5 +1,6 @@
-"""``train`` keeps the job contract on a CPU: its result's keys, early stopping through ``report``, unknown
-hyperparameters refused, and a saved network that loads back and predicts what training measured."""
+"""``train`` keeps the job contract on whatever device it runs on: its result's keys, early stopping through
+``report``, unknown hyperparameters refused, and a saved network that loads back and predicts what training
+measured."""
 
 import numpy as np
 import pytest
@@ -13,7 +14,7 @@ def test_result_contract(built):
     r = train.train(epochs=2, **SMALL)
     for k in ('val_acc', 'test_acc', 'train_seconds', 'images_per_s', 'params', 'device', 'history', evaluate.KEY):
         assert k in r
-    assert r['device'] == 'cpu' and len(r['history']) == 2 and 'device' not in r['hyperparameters']
+    assert r['device'] == jx.device_name() and len(r['history']) == 2 and 'device' not in r['hyperparameters']
 
 
 def test_report_stops_a_trial(built):
@@ -41,7 +42,9 @@ def test_saved_network_predicts_what_training_measured(built, tmp_path, monkeypa
 def test_seeds_in_one_program_are_separate_trainings(built):
     """``train_seeds`` vmaps one configuration over seeds (the schedule-free average, whitening, cutmix and cutout
     included): one seed is exactly ``train``'s run, a repeated seed gives the same run twice, and different seeds
-    differ. (Two seeds against one are equal only to rounding: the batched convolutions sum in another order.)"""
+    differ. (Two seeds against one are equal only to rounding: the batched convolutions sum in another order. On a
+    GPU that is true of one seed against ``train`` as well -- vmapping changes which kernels XLA picks -- so there
+    the two agree to rounding rather than bitwise.)"""
     h = {
         **SMALL,
         'epochs': 1,
@@ -54,7 +57,8 @@ def test_seeds_in_one_program_are_separate_trainings(built):
         'cutout_size': 8,
     }
     loss = lambda r: r['history'][0]['loss']
-    assert loss(train.train_seeds([1], **h)[0]) == loss(train.train(seed=1, **h))
+    vmapped, plain = loss(train.train_seeds([1], **h)[0]), loss(train.train(seed=1, **h))
+    assert vmapped == plain if jx.device_name() == 'cpu' else vmapped == pytest.approx(plain, rel=5e-3)
     a, b, c = train.train_seeds([1, 1, 0], together=True, **h)
     assert loss(a) == loss(b) and a['test_acc'] == b['test_acc'] and loss(a) != loss(c)
     assert [r['hyperparameters']['seed'] for r in (a, b, c)] == [1, 1, 0]

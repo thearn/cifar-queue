@@ -355,3 +355,24 @@ def gated_logits(
     need = (top2[:, 0] - top2[:, 1]) < gate
     out = jnp.where(need[:, None], tta(apply, x, level).astype(base.dtype), base)
     return out, need.astype(jnp.float32).mean()
+
+
+# ---- the whitening layer's filter, set from data and then frozen -------------------------------------------
+
+
+def whiten_init(layer: nnx.Module, x: ArrayLike, eps: float) -> None:
+    """Set the whitening convolution from normalised images ``x`` (N, 32, 32, 3): the eigenvectors of their patches'
+    covariance, largest first, over the square roots of their eigenvalues (plus ``eps``), and their negatives."""
+    import jax.numpy as jnp
+    import numpy as np
+    from flax import nnx
+
+    from . import jx
+
+    k = layer.weight.shape[0]
+    p = jx.patches(np.asarray(x, np.float64), k)
+    vals, vecs = np.linalg.eigh(p.T @ p / len(p))
+    vals, vecs = vals[::-1], vecs[:, ::-1]
+    filt = (vecs.T / np.sqrt(vals + eps)[:, None]).reshape(-1, k, k, x.shape[-1])  # (O, kh, kw, C)
+    filt = np.concatenate([filt, -filt])
+    layer.weight = nnx.Param(jnp.asarray(np.transpose(filt, (1, 2, 3, 0)), jnp.float32))

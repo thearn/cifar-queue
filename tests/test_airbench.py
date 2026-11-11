@@ -4,7 +4,7 @@ saved network loads back and predicts what training measured."""
 import numpy as np
 import pytest
 
-from cifarq import airbench
+from cifarq import airbench, jx
 
 SMALL = {'widths': (16, 32, 32), 'batch_size': 64, 'epochs': 2}
 
@@ -15,11 +15,23 @@ def test_published_parameter_counts():
     assert count(airbench.AIRBENCH96) == {'stored': 9918776, 'trainable': 9915416}  # 128/384/512, three convs a group
 
 
+def test_frozen_arrays_are_stored_but_not_trainable():
+    """A ``jx.Frozen`` array (a fixed filter bank) is part of the saved network and never trained, so it adds to the
+    stored count alone."""
+    import jax.numpy as jnp
+
+    net = airbench.build({**airbench.DEFAULTS, 'widths': (16, 32, 32)})[0]
+    before = airbench.param_counts(net)
+    net.extra = jx.Frozen(jnp.zeros((7, 3)))
+    after = airbench.param_counts(net)
+    assert after == {'stored': before['stored'] + 21, 'trainable': before['trainable']}
+
+
 def test_result_contract(built):
     r = airbench.train(**SMALL)
     for k in ('val_acc', 'val_acc_notta', 'test_acc', 'test_acc_notta', 'train_seconds', 'params', 'params_trainable', 'history', 'hyperparameters'):
         assert k in r
-    assert r['device'] == 'cpu' and len(r['history']) == 2 and r['params'] > r['params_trainable']
+    assert r['device'] == jx.device_name() and len(r['history']) == 2 and r['params'] > r['params_trainable']
 
 
 def test_report_stops_a_trial(built):

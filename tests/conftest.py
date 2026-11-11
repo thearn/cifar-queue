@@ -1,5 +1,5 @@
 """The tests run on a copy of configs/ in a temporary directory (``ML_PROJECT_ROOT``, set before the package is
-imported), its source switched to ``synthetic`` (tiny CIFAR-shaped parquet files made there: no network, no GPU), so
+imported), its source switched to ``synthetic`` (tiny CIFAR-shaped parquet files made there: no network needed), so
 they never touch the repository's data/ or results/. ``built`` runs the data stages there once."""
 
 import os
@@ -26,7 +26,10 @@ def copy_configs(root: Path):
 TMP = Path(tempfile.mkdtemp(prefix='cifarq-test-'))
 copy_configs(TMP)
 os.environ['ML_PROJECT_ROOT'] = str(TMP)
-os.environ.setdefault('JAX_PLATFORMS', 'cpu')  # the tests are CPU tests, also on a machine with a GPU
+os.environ.setdefault('JAX_PLATFORMS', 'cpu')  # a CPU by default, so the suite runs anywhere and needs no card
+# To exercise the GPU paths instead -- the arithmetic cifarq.precision picks, and the kernels XLA chooses -- run
+# `JAX_PLATFORMS=cuda,cpu pytest`. Name the CPU too: a few tests measure or train on it deliberately, and dropping
+# it from the list makes JAX refuse the backend outright rather than fall back.
 
 
 @pytest.fixture(scope='session')
