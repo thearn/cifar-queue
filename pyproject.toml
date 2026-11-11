@@ -26,9 +26,12 @@ queue = ["runq[gcs]"]                         # pipeline/ on the queue (runq: no
 where = ["src"]
 
 [tool.pytest.ini_options]
+# src first: a worktree's tests import its own code ahead of the editable install's (which names the main checkout)
+pythonpath = ["src"]
 testpaths = ["tests"]                               # (not results/publish/: a staged copy of the repository)
-markers = ["queue: runs a job through runq's daemon (skipped unless it is set up)"]
+markers = ["gate: style and structure checks run when work lands on main (git land), not on branches", "queue: runs a job through runq's daemon (skipped unless it is set up)"]
 
+addopts = "-m 'not gate'"
 [tool.ruff]
 line-length = 150               # the house style (runq's); 130 wraps lines for no behaviour
 target-version = "py311"
@@ -57,5 +60,12 @@ exclude = ["airbench.py"]  # ported from K. Jordan's cifar10-airbench as it is
 
 # The prose check of the global git hooks (lib/git-hooks, prose/check.py: Vale with the AIWriting and TristanHearn
 # styles) on Markdown, comments and docstrings, run by the pre-push hook on a push to main: gate refuses an error in the lines a push adds mode.
+
+# The landing gate (lib/git-hooks: git land, quality/gate.py): main moves only through git land once this table is here
+[tool.quality]
+absolute = ["module_size", "duplicate", "noqa"]
+package = "src/cifarq"
+python = "~/.venvs/cifarq-jax/bin/python"
+
 [tool.prose]
 mode = "gate"
