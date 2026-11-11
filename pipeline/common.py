@@ -15,7 +15,7 @@ from contextlib import chdir
 from importlib import import_module
 from pathlib import Path
 
-from cifarq import paths
+from cifarq import candidates, paths
 from cifarq.data import dataset
 
 ROOT, RESULTS = paths.ROOT, paths.RESULTS
@@ -141,9 +141,9 @@ def record(stage: str, out: dict) -> Path:
     d = RESULTS / stage
     d.mkdir(parents=True, exist_ok=True)
     f = d / f'{time.strftime("%Y%m%d-%H%M%S")}.json'
-    f.write_text(
-        json.dumps({'stage': stage, 'time': time.strftime('%Y-%m-%d %H:%M:%S'), 'provenance': provenance(), **out}, indent=1, default=str) + '\n'
-    )
+    rec = {'stage': stage, 'time': time.strftime('%Y-%m-%d %H:%M:%S'), 'provenance': provenance(), **out}
+    f.write_text(json.dumps(rec, indent=1, default=str) + '\n')
+    candidates.note(stage, json.loads(json.dumps(rec, default=str)), f)  # the result kept in candidates.jsonl (in git)
     return f
 
 

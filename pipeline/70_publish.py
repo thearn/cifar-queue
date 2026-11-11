@@ -19,7 +19,7 @@ from string import Template
 
 from common import RESULTS, ROOT, latest, record
 
-from cifarq import paths
+from cifarq import candidates, paths
 
 WEIGHTS = ('model.safetensors', 'config.json', 'hyperparameters.json')
 
@@ -115,3 +115,5 @@ if __name__ == '__main__':
         )
     print(json.dumps(out, indent=1))
     print('saved', record('publish', {'commit': commit, 'champion': champion['time'], **out}))
+    cid = 'champion-' + champion['time'].replace('-', '').replace(':', '').replace(' ', '-')  # (its results file's name)
+    candidates.verify(cid, 'published', True, f'hub commit of {ROOT.name} {commit}')

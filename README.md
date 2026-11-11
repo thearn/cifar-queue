@@ -36,6 +36,18 @@ The model is a ResNet-9 in the style of David Page's DAWNBench entry (94 % test 
 
 Note that the logit scaling matters more than it looks. At 4 epochs, scaling the logits by 0.125, using a cosine classifier, or batch-normalising the logits each gave roughly +10 points over a plain linear head (70.1 % to 80-82 %), which is why the space has all three.
 
+## Candidates: the best results, kept in git
+
+`results/` stays out of git (studies, models, logs). What must not be lost is kept in `candidates.jsonl` at the root, one
+JSON line per result a stage reports: a search's best trial, a trained run, a champion over seeds, the accuracy/compute front's most accurate point. Each line holds
+the metric and its value, the test score where one was measured, the full hyperparameters, the dataset's hash and the
+code that scored it (the git tree of `src/cifarq` and whether it had changes). `pipeline/common.record` adds the line
+every stage record implies; `60_champion.py --candidate <id>` trains a recorded candidate again over seeds and marks it
+verified; `70_publish.py` marks the champion it publishes. `python -m cifarq.candidates` lists the best per stage and
+metric, stale when it was scored on another dataset or by other training code than the current (still the best known,
+worth running again). The records up to 2026-11-10 were backfilled from the local `results/` (the G4 search's best,
+95.12 % validation, is verified by its champion, 94.58 % test over 3 seeds).
+
 ## Running on the queue
 
 The pipeline below needs runq, so it documents how the results were produced rather than something you can run today. A few of its terms are used throughout. A **job** is one Python function call (here `cifarq.train.train` with its hyperparameters) that the queue runs on whichever machine it places it: the local GPU, or a Colab VM it starts and stops as needed (an **executor**; `configs/compute.toml` names them: Colab L4s, G4 and A100, and rented cards on RunPod, Vast and Lambda). Each job gets its own directory, and whatever the function writes there comes back when it finishes. The queue copies the submitting Python environment to a VM once and caches it, sends only changed source files with each job, and sends the dataset file once per VM, keyed by its hash.

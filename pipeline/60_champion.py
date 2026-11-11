@@ -21,7 +21,7 @@ from pathlib import Path
 
 from common import RESULTS, ROOT, dataset_file, executor, parse_sets, record, sets_arg, stage_targets, targets_arg
 
-from cifarq import train, tune
+from cifarq import candidates, train, tune
 
 
 def best_params(storage: str, name: str | None) -> tuple[str, dict, dict]:
@@ -44,6 +44,7 @@ if __name__ == '__main__':
     ap.add_argument('--study', default=None, help='a study in it (default: the one with the best trial)')
     ap.add_argument('--reference', '--page', action='store_true', help="Page's recipe instead of the study's best")
     ap.add_argument('--params', type=Path, help="a JSON file of train's arguments instead of the study's best")
+    ap.add_argument('--candidate', default=None, help="a recorded candidate's hyperparameters (candidates.jsonl), verified by this run")
     ap.add_argument('--separate', action='store_true', help='a job a seed, instead of one job training them all together')
     sets_arg(ap)  # (overrides: --set epochs=30)
     targets_arg(ap)
@@ -53,10 +54,13 @@ if __name__ == '__main__':
         source, params = 'tune.REFERENCE', tune.REFERENCE
     elif a.params:  # (train's arguments already, not a trial's)
         source, params = str(a.params), json.loads(a.params.read_text())
+    elif a.candidate:  # a search's trial (to translate) or a trained run's arguments
+        source, params = f'candidates.jsonl#{a.candidate}', candidates.params_of(a.candidate)
     else:
         db = a.storage if a.storage.is_absolute() else (ROOT / a.storage).resolve()
         source, params, search = best_params(f'sqlite:///{db}', a.study)
-    params = {**(params if a.params else tune.train_params(params)), **parse_sets(a.set)}
+    resolved = a.params or (a.candidate and not a.candidate.startswith(candidates.SEARCH_STAGES))
+    params = {**(params if resolved else tune.train_params(params)), **parse_sets(a.set)}
     targets = stage_targets('champion', a.targets)
     print(f'{source}: {a.seeds} seeds over {targets}', flush=True)
     data = str(dataset_file())
@@ -88,6 +92,7 @@ if __name__ == '__main__':
     tests = [r['test_acc'] for r in runs]
     out = {
         'source': source,
+        'candidate': a.candidate,
         'search_trial': search,
         'params': params,
         'runs': runs,
