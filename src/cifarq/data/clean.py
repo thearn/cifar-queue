@@ -55,8 +55,8 @@ def run(executor=None, force: bool = False) -> dict:
     cfg = paths.config('data')
     raw = paths.read_manifest('raw') or {}
     inputs = paths.digest([raw.get('files'), cfg['clean']])
-    if not force and paths.up_to_date('clean', inputs, CLEAN):
-        return paths.read_manifest('clean')
+    if not force and (fresh := paths.fresh_manifest('clean', inputs, CLEAN)):
+        return fresh
     shutil.rmtree(CLEAN, ignore_errors=True)
     CLEAN.mkdir(parents=True)
     reports = []

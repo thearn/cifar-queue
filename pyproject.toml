@@ -63,7 +63,8 @@ exclude = ["airbench.py"]  # ported from K. Jordan's cifar10-airbench as it is
 
 # The landing gate (lib/git-hooks: git land, quality/gate.py): main moves only through git land once this table is here
 [tool.quality]
-absolute = ["function_size", "function_complexity", "module_size", "duplicate", "pass_through", "noqa"]
+typecheck = "absolute"
+absolute = ["function_size", "function_complexity", "function_parameters", "function_any", "module_size", "duplicate", "pass_through", "noqa"]
 package = "src/cifarq"
 python = "~/.venvs/cifarq-jax/bin/python"
 

@@ -38,8 +38,10 @@ float32). The loss is computed in float32 under every precision.
 
 from __future__ import annotations
 
+import functools
 import json
 import math
+import operator
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -443,7 +445,7 @@ def tta_logits(apply: Callable[[jax.Array], jax.Array], x: jax.Array, level: int
         return mirror(x)
     if level >= 3:
         padded = jnp.pad(x, ((0, 0), (2, 2), (2, 2), (0, 0)), mode='reflect')
-        return sum(mirror(padded[:, dy : dy + 32, dx : dx + 32]) for dy in (0, 2, 4) for dx in (0, 2, 4)) / 9
+        return functools.reduce(operator.add, (mirror(padded[:, dy : dy + 32, dx : dx + 32]) for dy in (0, 2, 4) for dx in (0, 2, 4))) / 9
     padded = jnp.pad(x, ((0, 0), (1, 1), (1, 1), (0, 0)), mode='reflect')
     shifted = 0.5 * (mirror(padded[:, 0:32, 0:32]) + mirror(padded[:, 2:34, 2:34]))
     return 0.5 * mirror(x) + 0.5 * shifted

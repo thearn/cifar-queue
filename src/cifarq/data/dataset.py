@@ -30,8 +30,8 @@ def build(force: bool = False) -> dict:
     if clean is None:
         raise FileNotFoundError('no data/manifests/clean.json: run pipeline/20_clean.py first')
     inputs = paths.digest([clean['files'], cfg['split'], cfg['clean']['classes']])
-    if not force and paths.up_to_date('dataset', inputs, DATASET):
-        return paths.read_manifest('dataset')
+    if not force and (fresh := paths.fresh_manifest('dataset', inputs, DATASET)):
+        return fresh
     train, test = np.load(CLEAN / 'train.npz'), np.load(CLEAN / 'test.npz')
     order = np.random.default_rng(cfg['split']['seed']).permutation(len(train['y']))
     val_idx, tr_idx = order[:cfg['split']['validation']], order[cfg['split']['validation']:]

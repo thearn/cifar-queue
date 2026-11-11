@@ -44,8 +44,10 @@ def write_manifest(name: str, manifest: dict) -> Path:
     return f
 
 
-def up_to_date(name: str, inputs: str, directory: Path) -> bool:
-    """Whether stage ``name`` already ran on ``inputs`` (a ``digest`` of what it read and its settings) and its files
-    are still in ``directory`` with the hashes it recorded."""
+def fresh_manifest(name: str, inputs: str, directory: Path) -> dict | None:
+    """Stage ``name``'s manifest when it already ran on ``inputs`` (a ``digest`` of what it read and its settings) and
+    its files are still in ``directory`` with the hashes it recorded; else None."""
     m = read_manifest(name)
-    return bool(m and m.get('inputs') == inputs and all((directory / f).exists() and sha256(directory / f) == h for f, h in m['files'].items()))
+    if m and m.get('inputs') == inputs and all((directory / f).exists() and sha256(directory / f) == h for f, h in m['files'].items()):
+        return m
+    return None

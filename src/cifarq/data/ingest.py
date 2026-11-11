@@ -43,8 +43,8 @@ def fetch(force: bool = False) -> dict:
     cfg = paths.config('data')['source']
     inputs = paths.digest(cfg)
     pinned = not cfg['uri'].startswith('hf://') or '@' in cfg['uri']
-    if not force and pinned and paths.up_to_date('raw', inputs, RAW):
-        return paths.read_manifest('raw')
+    if not force and pinned and (fresh := paths.fresh_manifest('raw', inputs, RAW)):
+        return fresh
     if RAW.exists():
         for f in RAW.rglob('*'):
             if f.is_file():
