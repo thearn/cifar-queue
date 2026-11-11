@@ -4,9 +4,22 @@ saved network loads back and predicts what training measured."""
 import numpy as np
 import pytest
 
-from cifarq import airbench
+from cifarq import airbench, jx
 
 SMALL = {'widths': (16, 32, 32), 'batch_size': 64, 'epochs': 2}
+
+
+def assert_reload_predicts(r: dict, built: dict) -> None:
+    """The saved network, reloaded on the device and in the arithmetic training measured with, gets the test images
+    right as often as training said, give or take two (barely trained, its top logits nearly tie; on a GPU a batch's
+    shape picks the kernels, which round differently)."""
+    from cifarq import precision
+
+    h = r['hyperparameters']
+    dtype = precision.compute_dtype(h['precision'], summed_loss=airbench.summed_loss(h))
+    probs = airbench.Predictor(r['saved'], device=jx.device_name(), dtype=dtype).predict(built['x_test'])
+    right = int((probs.argmax(1) == built['y_test']).sum())
+    assert abs(right - round(r['test_acc'] * len(probs))) <= 2
 
 
 def test_published_parameter_counts():
@@ -15,11 +28,23 @@ def test_published_parameter_counts():
     assert count(airbench.AIRBENCH96) == {'stored': 9918776, 'trainable': 9915416}  # 128/384/512, three convs a group
 
 
+def test_frozen_arrays_are_stored_but_not_trainable():
+    """A ``jx.Frozen`` array (a fixed filter bank) is part of the saved network and never trained, so it adds to the
+    stored count alone."""
+    import jax.numpy as jnp
+
+    net = airbench.build({**airbench.DEFAULTS, 'widths': (16, 32, 32)})[0]
+    before = airbench.param_counts(net)
+    net.extra = jx.Frozen(jnp.zeros((7, 3)))
+    after = airbench.param_counts(net)
+    assert after == {'stored': before['stored'] + 21, 'trainable': before['trainable']}
+
+
 def test_result_contract(built):
     r = airbench.train(**SMALL)
     for k in ('val_acc', 'val_acc_notta', 'test_acc', 'test_acc_notta', 'train_seconds', 'params', 'params_trainable', 'history', 'hyperparameters'):
         assert k in r
-    assert r['device'] == 'cpu' and len(r['history']) == 2 and r['params'] > r['params_trainable']
+    assert r['device'] == jx.device_name() and len(r['history']) == 2 and r['params'] > r['params_trainable']
 
 
 def test_report_stops_a_trial(built):
@@ -39,7 +64,7 @@ def test_saved_network_predicts_what_training_measured(built, tmp_path, extra):
     r = airbench.train(**SMALL, **extra, save=str(tmp_path / 'model'))
     probs = airbench.Predictor(r['saved']).predict(built['x_test'])
     assert probs.shape == (200, 10) and np.allclose(probs.sum(1), 1, atol=1e-5)
-    assert abs((probs.argmax(1) == built['y_test']).mean() - r['test_acc']) <= 2 / len(probs)
+    assert_reload_predicts(r, built)
 
 
 def test_distillation_from_a_saved_teacher(built, tmp_path):
@@ -63,8 +88,7 @@ def test_distillation_from_a_saved_teacher(built, tmp_path):
 )
 def test_other_families_train_save_and_load(built, tmp_path, arch, kw):
     r = airbench.train(**SMALL, arch=arch, arch_kw=kw, tta_level=1, save=str(tmp_path / 'm'))
-    probs = airbench.Predictor(r['saved']).predict(built['x_test'])
-    assert abs((probs.argmax(1) == built['y_test']).mean() - r['test_acc']) <= 2 / len(probs)
+    assert_reload_predicts(r, built)
     assert r['params_trainable'] < r['params']  # (batch norm's scale frozen)
 
 
@@ -118,8 +142,7 @@ def test_flip_equivariant_groups_are_invariant_to_mirroring():
 )
 def test_methods_train_save_and_reload(built, tmp_path, extra):
     r = airbench.train(**{**SMALL, **extra}, save=str(tmp_path / 'm'))
-    probs = airbench.Predictor(r['saved']).predict(built['x_test'])
-    assert abs((probs.argmax(1) == built['y_test']).mean() - r['test_acc']) <= 2 / len(probs)
+    assert_reload_predicts(r, built)
     if 'tails' in extra:
         assert r['epochs_charged'] == 4 and r['history'][-1]['epoch'] == 'tails-averaged'
     if 'tta_gate' in extra:

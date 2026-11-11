@@ -195,3 +195,30 @@ def apply(key: jax.Array, x: jax.Array, kind: str, m: int, mean: ArrayLike, std:
         key, k = jax.random.split(key)
         outs.append(fn(k, x[i : i + chunk]))
     return jnp.concatenate(outs)
+
+
+# ---- the two geometric augmentations airbench's recipe uses, which need no policy ------------------------------
+
+
+def crop(key: jax.Array, images: jax.Array, size: int) -> jax.Array:
+    """Random translations: crops of ``size`` from reflect-padded images, one shift per image (airbench's)."""
+    import jax
+
+    r = (images.shape[1] - size) // 2
+    shifts = jax.random.randint(key, (len(images), 2), -r, r + 1)
+    one = lambda img, s: jax.lax.dynamic_slice(img, (r + s[0], r + s[1], 0), (size, size, img.shape[-1]))
+    return jax.vmap(one)(images, shifts)
+
+
+def cutout(key: jax.Array, images: jax.Array, size: int) -> jax.Array:
+    """A ``size`` by ``size`` square of each image set to zero, its corner drawn so the square stays inside."""
+    import jax
+    import jax.numpy as jnp
+
+    n, h, w, _ = images.shape
+    ky, kx = jax.random.split(key)
+    cy, cx = jax.random.randint(ky, (n,), 0, h - size + 1), jax.random.randint(kx, (n,), 0, w - size + 1)
+    dy = jnp.arange(h)[None, :, None] - cy[:, None, None]
+    dx = jnp.arange(w)[None, None, :] - cx[:, None, None]
+    box = (dy >= 0) & (dy < size) & (dx >= 0) & (dx < size)
+    return jnp.where(box[..., None], 0, images).astype(images.dtype)

@@ -31,9 +31,10 @@ whitening weight (frozen) and bias (trained for ``whiten_bias_epochs``), the fil
 
 Differences from the Torch port, all numerical: ``precision`` 'fp16' and 'amp' both mean float32 weights and
 optimiser state with bfloat16 arithmetic on a GPU (Torch's 'fp16' kept the weights themselves in float16); on a CPU
-the arithmetic is float32, as before. Batch norm's running variance is the biased batch variance (Torch's is
-unbiased, a factor n/(n-1) at n = batch x pixels). The whitening and PCA eigenvectors are computed in float64 (Torch:
-float32). The loss is computed in float32 under every precision.
+the arithmetic is float32, as before. 'auto', the default, picks bfloat16 where the card runs it natively and float16
+where it does not (a Tesla T4), and 'f16' asks for float16 outright: see :mod:`cifarq.precision`. Batch norm's running
+variance is the biased batch variance (Torch's is unbiased, a factor n/(n-1) at n = batch x pixels). The whitening
+and PCA eigenvectors are computed in float64 (Torch: float32). The loss is computed in float32 under every precision.
 """
 
 from __future__ import annotations
@@ -57,6 +58,11 @@ if TYPE_CHECKING:
     from flax import nnx
     from jax.typing import DTypeLike
     from numpy.typing import ArrayLike as NPArrayLike
+
+# Images an evaluation forward pass. Every image's logits come from itself alone, so it moves no accuracy, only memory
+# and time: 2000 x 6 views ran out of memory on 16 GB cards (airbench96 on the 5070 Ti, airbench94 on a T4), and from
+# 500 up the time is flat within 4 % (5070 Ti, 2026-11-11: airbench96 0.70 s at 500, 0.69 s at 1500, 10k images x 6).
+EVAL_BATCH = 500
 
 DEFAULTS = dict(
     # network
@@ -104,7 +110,7 @@ DEFAULTS = dict(
     kd_teacher='',
     kd_weight=0.0,
     kd_temp=4.0,
-    precision='fp16',
+    precision='auto',
     eq_group='d1',
     blur_pool=False,
     se=0,
@@ -264,15 +270,6 @@ def _modules() -> dict[str, type]:
     return _M
 
 
-def _compute_dtype(h: dict, device: str = 'auto') -> DTypeLike:
-    import jax.numpy as jnp
-
-    from . import jx
-
-    gpu = jx.pick(device).platform == 'gpu'
-    return jnp.bfloat16 if gpu and h.get('precision', 'fp16') != 'fp32' else jnp.float32
-
-
 def model(
     widths: Iterable[int] = (64, 256, 256),
     depth: int = 2,
@@ -400,7 +397,8 @@ def labels(net: nnx.Module, params: nnx.State, bn_scale: bool = False) -> Any:
 
 def param_counts(net: nnx.Module, bn_scale: bool = False) -> dict:
     """{'stored': every parameter array's size, frozen ones included; 'trainable': those training updates} (batch-norm
-    running statistics are not counted; batch norm's frozen scale is a parameter and is counted)."""
+    running statistics are not counted; batch norm's frozen scale is a parameter and is counted). A ``jx.Frozen``
+    array is stored and never trained, so it belongs to the first count and not the second."""
     import jax
     from flax import nnx
 
@@ -409,27 +407,10 @@ def param_counts(net: nnx.Module, bn_scale: bool = False) -> dict:
     params = nnx.state(net, nnx.Param)
     lab = labels(net, params, bn_scale)
     sizes = jax.tree.map(lambda a: int(math.prod(a.shape)), params)
-    stored = sum(jax.tree.leaves(sizes)) + jx.count(nnx.state(net, jx.Frozen))
-    frozen = sum(s for s, l in zip(jax.tree.leaves(sizes), jax.tree.leaves(lab), strict=True) if l == 'frozen')
+    never = jx.count(nnx.state(net, jx.Frozen))
+    stored = sum(jax.tree.leaves(sizes)) + never
+    frozen = never + sum(s for s, l in zip(jax.tree.leaves(sizes), jax.tree.leaves(lab), strict=True) if l == 'frozen')
     return {'stored': stored, 'trainable': stored - frozen}
-
-
-def whiten_init(layer: nnx.Module, x: NPArrayLike, eps: float) -> None:
-    """Set the whitening convolution from normalised images ``x`` (N, 32, 32, 3): the eigenvectors of their patches'
-    covariance, largest first, over the square roots of their eigenvalues (plus ``eps``), and their negatives."""
-    import jax.numpy as jnp
-    import numpy as np
-    from flax import nnx
-
-    from . import jx
-
-    k = layer.weight.shape[0]
-    p = jx.patches(np.asarray(x, np.float64), k)
-    vals, vecs = np.linalg.eigh(p.T @ p / len(p))
-    vals, vecs = vals[::-1], vecs[:, ::-1]
-    filt = (vecs.T / np.sqrt(vals + eps)[:, None]).reshape(-1, k, k, x.shape[-1])  # (O, kh, kw, C)
-    filt = np.concatenate([filt, -filt])
-    layer.weight = nnx.Param(jnp.asarray(np.transpose(filt, (1, 2, 3, 0)), jnp.float32))
 
 
 def tta_logits(apply: Callable[[jax.Array], jax.Array], x: jax.Array, level: int) -> jax.Array:
@@ -451,27 +432,10 @@ def tta_logits(apply: Callable[[jax.Array], jax.Array], x: jax.Array, level: int
     return 0.5 * mirror(x) + 0.5 * shifted
 
 
-def _crop(key: jax.Array, images: jax.Array, size: int) -> jax.Array:
-    """Random translations: crops of ``size`` from reflect-padded images, one shift per image (airbench's)."""
-    import jax
-
-    r = (images.shape[1] - size) // 2
-    shifts = jax.random.randint(key, (len(images), 2), -r, r + 1)
-    one = lambda img, s: jax.lax.dynamic_slice(img, (r + s[0], r + s[1], 0), (size, size, img.shape[-1]))
-    return jax.vmap(one)(images, shifts)
-
-
-def _cutout(key: jax.Array, images: jax.Array, size: int) -> jax.Array:
-    import jax
-    import jax.numpy as jnp
-
-    n, h, w, _ = images.shape
-    ky, kx = jax.random.split(key)
-    cy, cx = jax.random.randint(ky, (n,), 0, h - size + 1), jax.random.randint(kx, (n,), 0, w - size + 1)
-    dy = jnp.arange(h)[None, :, None] - cy[:, None, None]
-    dx = jnp.arange(w)[None, None, :] - cx[:, None, None]
-    box = (dy >= 0) & (dy < size) & (dx >= 0) & (dx < size)
-    return jnp.where(box[..., None], 0, images).astype(images.dtype)
+def summed_loss(h: dict) -> bool:
+    """Whether a run's loss is summed over the batch (``sgd`` and ``muon``, airbench's own) rather than its mean
+    (``adamw``): it sets the loss, and whether ``precision='auto'`` may use float16 (:func:`cifarq.precision.compute_dtype`)."""
+    return h['optimizer'] in ('sgd', 'muon')
 
 
 def _check(hyperparameters: dict) -> dict:
@@ -548,12 +512,12 @@ def train(data: str | None = None, save: str | None = None, report: Any = None, 
     import numpy as np
     import optax
 
-    from . import jx
+    from . import jx, precision
     from .data import dataset
 
     jx.cache()
     dev = jx.pick(device)
-    dtype = _compute_dtype(h, device)
+    dtype = precision.compute_dtype(h['precision'], device, summed_loss=summed_loss(h))
     with jax.default_device(dev):
         return _train(h, data, save, report, device, dev, dtype, jax, jnp, np, optax, jx, dataset)
 
@@ -575,6 +539,8 @@ def _train(
 ) -> dict:
     from flax import nnx
 
+    from . import augment, methods
+
     arrays = dataset.load(data)
     mean_, std_ = np.asarray(MEAN, np.float32), np.asarray(STD, np.float32)
     images = lambda a: (np.asarray(a, np.float32) / 255 - mean_) / std_
@@ -589,7 +555,7 @@ def _train(
 
     net, whiten = build(h, dtype)
     counts = param_counts(net, h['bn_scale'])
-    sgd_like = h['optimizer'] in ('sgd', 'muon')
+    sgd_like = summed_loss(h)
     proxy, proxy_info = None, {}
     if h['filter_keep'] < 1:
         # D1, data filtering (airbench96_faster's idea, with a proxy trained first and then fixed): a small network
@@ -640,7 +606,7 @@ def _train(
 
     t0 = time.time()
     if whiten is not None:
-        whiten_init(whiten, x_train[:5000], h['whiten_eps'])
+        methods.whiten_init(whiten, x_train[:5000], h['whiten_eps'])
     if h['pca_init']:  # (MT3)
         from .methods import pca_init
 
@@ -670,7 +636,7 @@ def _train(
     @jax.jit
     def make_epoch(key: jax.Array, src: jax.Array) -> tuple[jax.Array, jax.Array]:
         kc, kq = jax.random.split(key)
-        ep = _crop(kc, src, 32) if tr > 0 else src
+        ep = augment.crop(kc, src, 32) if tr > 0 else src
         return ep, kq
 
     @jax.jit
@@ -678,7 +644,7 @@ def _train(
         if h['flip']:
             ep = jnp.where(epoch % 2 == 1, ep[:, :, ::-1], ep)
         if h['cutout'] > 0:
-            ep = _cutout(key, ep, h['cutout'])
+            ep = augment.cutout(key, ep, h['cutout'])
         return ep
 
     def epoch_images(key: jax.Array, epoch: jax.Array) -> jax.Array:
@@ -779,12 +745,14 @@ def _train(
     fwd_jit = jax.jit(fwd, static_argnums=(3, 4))
 
     def accuracy(carry: dict, x: np.ndarray, y: np.ndarray, level: int, gate: float = 0.0) -> tuple[float, float]:
-        """(accuracy at ``level``'s views, the share of images given them: 1 unless MT6's ``gate`` is set)."""
+        """(accuracy at ``level``'s views, the share of images given them: 1 unless MT6's ``gate`` is set), ``EVAL_BATCH``
+        images a forward pass."""
+        eb = EVAL_BATCH
         correct, shares, nn_ = 0, 0.0, len(y)
-        for a, b in jx.batches(nn_, 2000):
+        for a, b in jx.batches(nn_, eb):
             xb = jnp.asarray(x[a:b], dtype)
-            if b - a < 2000 and nn_ > 2000:
-                xb = jnp.concatenate([xb, jnp.zeros((2000 - (b - a), *xb.shape[1:]), xb.dtype)])
+            if b - a < eb and nn_ > eb:
+                xb = jnp.concatenate([xb, jnp.zeros((eb - (b - a), *xb.shape[1:]), xb.dtype)])
             z, share = fwd_jit(carry['params'], carry['rest'], xb, level, float(gate))
             z = np.asarray(z)[: b - a]
             correct += int((z.argmax(1) == np.asarray(y[a:b])).sum())
