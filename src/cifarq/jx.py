@@ -277,10 +277,6 @@ def from_host(tree: Any, device: jax.Device | None = None) -> Any:
     return jax.tree.map(one, tree, is_leaf=lambda a: isinstance(a, HostKey))
 
 
-def apply_updates(params: Any, updates: Any) -> Any:
-    return optax.apply_updates(params, updates)
-
-
 def eval_params(opt_state: Any, params: Any, schedule_free: bool) -> Any:
     """The weights to evaluate: the schedule-free average where the optimiser keeps one, else the weights."""
     if not schedule_free:

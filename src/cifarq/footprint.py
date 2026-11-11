@@ -73,6 +73,23 @@ def views(directory: str | Path) -> int:
     return {0: 1, 1: 2, 2: 6, 3: 18}[int(cfg.get('tta_level', 0))]  # (level 3: added 2026-10-30, P2)
 
 
+def _eqn_macs(eqn: Any) -> int:
+    """MACs of one convolution or dot product: its output size times the product over the contracted dimensions."""
+    out = eqn.outvars[0].aval
+    lhs, rhs = eqn.invars[0].aval, eqn.invars[1].aval
+    per = 1
+    if eqn.primitive.name == 'conv_general_dilated':
+        o = eqn.params['dimension_numbers'].rhs_spec[0]
+        for i, d in enumerate(rhs.shape):
+            if i != o:
+                per *= d
+    else:
+        (lc, _), _ = eqn.params['dimension_numbers']
+        for i in lc:
+            per *= lhs.shape[i]
+    return int(out.size) * per
+
+
 def _macs(jaxpr: core.Jaxpr, depends: dict[Any, set[str]]) -> int:
     """MACs of the equations of ``jaxpr`` whose operands mix the input with the arrays: ``depends`` maps each invar to
     its set of sources ({'x'}, {'w'} or both), propagated through every equation (sub-programs recursively)."""
@@ -87,21 +104,7 @@ def _macs(jaxpr: core.Jaxpr, depends: dict[Any, set[str]]) -> int:
         if name in ('conv_general_dilated', 'dot_general') and len(ins) >= 2 and ({'x'} <= ins[0] | ins[1]) and ins[0] and ins[1]:
             mixed = ('x' in ins[0] and 'w' in ins[1]) or ('w' in ins[0] and 'x' in ins[1])
             if mixed:
-                out = eqn.outvars[0].aval
-                lhs, rhs = eqn.invars[0].aval, eqn.invars[1].aval
-                if name == 'conv_general_dilated':
-                    o = eqn.params['dimension_numbers'].rhs_spec[0]
-                    per = 1
-                    for i, d in enumerate(rhs.shape):
-                        if i != o:
-                            per *= d
-                    total += int(out.size) * per
-                else:
-                    (lc, _), _ = eqn.params['dimension_numbers']
-                    per = 1
-                    for i in lc:
-                        per *= lhs.shape[i]
-                    total += int(out.size) * per
+                total += _eqn_macs(eqn)
         for p in eqn.params.values():
             sub = getattr(p, 'jaxpr', p)
             if hasattr(sub, 'eqns') and hasattr(sub, 'invars') and len(sub.invars) == len(eqn.invars):

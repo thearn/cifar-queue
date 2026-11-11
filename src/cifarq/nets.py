@@ -71,10 +71,6 @@ def _linear(cin: int, cout: int, dtype: DTypeLike, rngs: nnx.Rngs) -> nnx.Linear
     return nnx.Linear(cin, cout, kernel_init=jx.torch_kernel_init(), bias_init=jx.torch_bias_init(cin), dtype=dtype, rngs=rngs)
 
 
-def _bn(c: int, rngs: nnx.Rngs) -> nnx.BatchNorm:
-    return jx.batchnorm(c, rngs=rngs)
-
-
 def _avg_pool(x: jax.Array, k: int) -> jax.Array:
     return nnx.avg_pool(x, (k, k), strides=(k, k))
 
@@ -117,14 +113,14 @@ def convmixer(
     r = nnx.Rngs(params=seed)
     blocks = [
         Seq(
-            Residual(Seq(Conv(dim, dim, kernel, padding='SAME', groups=dim, dtype=dtype, rngs=r), gelu, _bn(dim, r))),
+            Residual(Seq(Conv(dim, dim, kernel, padding='SAME', groups=dim, dtype=dtype, rngs=r), gelu, jx.batchnorm(dim, rngs=r))),
             Conv(dim, dim, 1, dtype=dtype, rngs=r),
             gelu,
-            _bn(dim, r),
+            jx.batchnorm(dim, rngs=r),
         )
         for _ in range(depth)
     ]
-    body = Seq(Conv(3, dim, patch, stride=patch, dtype=dtype, rngs=r), gelu, _bn(dim, r), *blocks, _head(dim, classes, dtype, r))
+    body = Seq(Conv(3, dim, patch, stride=patch, dtype=dtype, rngs=r), gelu, jx.batchnorm(dim, rngs=r), *blocks, _head(dim, classes, dtype, r))
     return _Net(body)
 
 
@@ -139,24 +135,24 @@ class _PyramidBlock(nnx.Module):
         cout = c * expansion
         if bottleneck:
             self.f = Seq(
-                _bn(cin, r),
+                jx.batchnorm(cin, rngs=r),
                 Conv(cin, c, 1, bias=False, dtype=dtype, rngs=r),
-                _bn(c, r),
+                jx.batchnorm(c, rngs=r),
                 relu,
                 Conv(c, c, 3, stride, 1, bias=False, dtype=dtype, rngs=r),
-                _bn(c, r),
+                jx.batchnorm(c, rngs=r),
                 relu,
                 Conv(c, cout, 1, bias=False, dtype=dtype, rngs=r),
-                _bn(cout, r),
+                jx.batchnorm(cout, rngs=r),
             )
         else:
             self.f = Seq(
-                _bn(cin, r),
+                jx.batchnorm(cin, rngs=r),
                 Conv(cin, c, 3, stride, 1, bias=False, dtype=dtype, rngs=r),
-                _bn(c, r),
+                jx.batchnorm(c, rngs=r),
                 relu,
                 Conv(c, cout, 3, 1, 1, bias=False, dtype=dtype, rngs=r),
-                _bn(cout, r),
+                jx.batchnorm(cout, rngs=r),
             )
         self.stride, self.pad = stride, cout - cin
 
@@ -175,23 +171,23 @@ def pyramidnet(
     n = (depth - 2) // (9 if bottleneck else 6)
     expansion = 4 if bottleneck else 1
     add = alpha / (3 * n)
-    layers, c, cin = [Conv(3, 16, 3, 1, 1, bias=False, dtype=dtype, rngs=r), _bn(16, r)], 16.0, 16
+    layers, c, cin = [Conv(3, 16, 3, 1, 1, bias=False, dtype=dtype, rngs=r), jx.batchnorm(16, rngs=r)], 16.0, 16
     for stage in range(3):
         for i in range(n):
             c += add
             layers.append(_PyramidBlock(cin, int(round(c)), 2 if stage > 0 and i == 0 else 1, bottleneck, expansion, dtype, r))
             cin = int(round(c)) * expansion
-    layers += [_bn(cin, r), relu, _head(cin, classes, dtype, r)]
+    layers += [jx.batchnorm(cin, rngs=r), relu, _head(cin, classes, dtype, r)]
     return _Net(Seq(*layers))
 
 
 class _DenseLayer(nnx.Module):
     def __init__(self, cin: int, growth: int, dtype: DTypeLike, r: nnx.Rngs) -> None:
         self.f = Seq(
-            _bn(cin, r),
+            jx.batchnorm(cin, rngs=r),
             relu,
             Conv(cin, 4 * growth, 1, bias=False, dtype=dtype, rngs=r),
-            _bn(4 * growth, r),
+            jx.batchnorm(4 * growth, rngs=r),
             relu,
             Conv(4 * growth, growth, 3, 1, 1, bias=False, dtype=dtype, rngs=r),
         )
@@ -210,9 +206,9 @@ def densenet(depth: int = 100, growth: int = 12, classes: int = 10, dtype: DType
             layers.append(_DenseLayer(c, growth, dtype, r))
             c += growth
         if stage < 2:
-            layers += [_bn(c, r), relu, Conv(c, c // 2, 1, bias=False, dtype=dtype, rngs=r), lambda x: _avg_pool(x, 2)]
+            layers += [jx.batchnorm(c, rngs=r), relu, Conv(c, c // 2, 1, bias=False, dtype=dtype, rngs=r), lambda x: _avg_pool(x, 2)]
             c //= 2
-    layers += [_bn(c, r), relu, _head(c, classes, dtype, r)]
+    layers += [jx.batchnorm(c, rngs=r), relu, _head(c, classes, dtype, r)]
     return _Net(Seq(*layers))
 
 
@@ -251,7 +247,7 @@ class Shake(nnx.Module):
 class _Shortcut(nnx.Module):  # (the paper's: two 1x1 paths, the second shifted a pixel)
     def __init__(self, cin: int, cout: int, stride: int, dtype: DTypeLike, r: nnx.Rngs) -> None:
         self.a, self.b = Conv(cin, cout // 2, 1, bias=False, dtype=dtype, rngs=r), Conv(cin, cout // 2, 1, bias=False, dtype=dtype, rngs=r)
-        self.bn, self.stride = _bn(cout, r), stride
+        self.bn, self.stride = jx.batchnorm(cout, rngs=r), stride
 
     def __call__(self, x: jax.Array) -> jax.Array:
         x = relu(x)
@@ -265,10 +261,10 @@ class _ShakeBlock(nnx.Module):
         branch = lambda: Seq(
             relu,
             Conv(cin, cout, 3, stride, 1, bias=False, dtype=dtype, rngs=r),
-            _bn(cout, r),
+            jx.batchnorm(cout, rngs=r),
             relu,
             Conv(cout, cout, 3, 1, 1, bias=False, dtype=dtype, rngs=r),
-            _bn(cout, r),
+            jx.batchnorm(cout, rngs=r),
         )
         self.b1, self.b2 = branch(), branch()
         self.short = _Shortcut(cin, cout, stride, dtype, r) if stride != 1 or cin != cout else None
@@ -282,7 +278,7 @@ class _ShakeBlock(nnx.Module):
 def shakeshake(depth: int = 26, width: int = 32, classes: int = 10, dtype: DTypeLike = jnp.float32, seed: int = 0, **_) -> _Net:
     r = nnx.Rngs(params=seed)
     n = (depth - 2) // 6
-    layers, cin = [Conv(3, 16, 3, 1, 1, bias=False, dtype=dtype, rngs=r), _bn(16, r)], 16
+    layers, cin = [Conv(3, 16, 3, 1, 1, bias=False, dtype=dtype, rngs=r), jx.batchnorm(16, rngs=r)], 16
     for stage, c in enumerate((width, 2 * width, 4 * width)):
         for i in range(n):
             layers.append(_ShakeBlock(cin, c, 2 if stage > 0 and i == 0 else 1, dtype, r))
@@ -293,8 +289,8 @@ def shakeshake(depth: int = 26, width: int = 32, classes: int = 10, dtype: DType
 
 class _WRNBlock(nnx.Module):
     def __init__(self, cin: int, cout: int, stride: int, dtype: DTypeLike, r: nnx.Rngs) -> None:
-        self.bn1, self.conv1 = _bn(cin, r), Conv(cin, cout, 3, stride, 1, bias=False, dtype=dtype, rngs=r)
-        self.bn2, self.conv2 = _bn(cout, r), Conv(cout, cout, 3, 1, 1, bias=False, dtype=dtype, rngs=r)
+        self.bn1, self.conv1 = jx.batchnorm(cin, rngs=r), Conv(cin, cout, 3, stride, 1, bias=False, dtype=dtype, rngs=r)
+        self.bn2, self.conv2 = jx.batchnorm(cout, rngs=r), Conv(cout, cout, 3, 1, 1, bias=False, dtype=dtype, rngs=r)
         self.short = Conv(cin, cout, 1, stride, bias=False, dtype=dtype, rngs=r) if stride != 1 or cin != cout else None
 
     def __call__(self, x: jax.Array) -> jax.Array:
@@ -311,7 +307,7 @@ def wrn(depth: int = 16, k: int = 4, classes: int = 10, dtype: DTypeLike = jnp.f
         for i in range(n):
             layers.append(_WRNBlock(cin, c, 2 if stage > 0 and i == 0 else 1, dtype, r))
             cin = c
-    layers += [_bn(cin, r), relu, _head(cin, classes, dtype, r)]
+    layers += [jx.batchnorm(cin, rngs=r), relu, _head(cin, classes, dtype, r)]
     return _Net(Seq(*layers))
 
 

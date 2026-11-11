@@ -121,7 +121,7 @@ def run_pbt(base: dict, data: str | None = None, population: int = 8, concurrent
         return min(hi, max(lo, v))
 
     space = {k: rtune.sample_from(lambda spec, k=k: start(k)) for k in MUTABLE}
-    log_uniform = lambda lo, hi: (lambda: math.exp(rng.uniform(math.log(lo), math.log(hi))))
+    log_uniform = lambda lo, hi: lambda: math.exp(rng.uniform(math.log(lo), math.log(hi)))
     mutations = {
         k: (log_uniform(max(lo, 1e-5), hi) if k in ('lr', 'weight_decay') else (lambda lo=lo, hi=hi: rng.uniform(lo, hi)))
         for k, (lo, hi) in MUTABLE.items()

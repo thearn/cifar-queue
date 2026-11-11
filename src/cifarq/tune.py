@@ -247,6 +247,40 @@ def _best_by_time(study) -> list:
     return out
 
 
+def _summary(study, warm_points: list, t0: float, *, warm: bool, pruner: str, startup: int, family: str, cap: int, max_epochs: float) -> dict:
+    """The search's outcome for ``summary.json``: the best trial, the start, minutes to each accuracy, the search's own
+    finds apart from its starting points, trial counts by state, and the best value against time."""
+    best = study.best_trial
+    states = [t.state.name for t in study.trials]
+    others = [t.value for t in study.trials if t.state.name == 'COMPLETE' and (t.number >= len(warm_points) or not warm)]
+    return {
+        'best_value': best.value,
+        'best_params': best.params,
+        'best_test_acc': best.user_attrs.get('test_acc'),
+        'best_train_seconds': best.user_attrs.get('train_seconds'),
+        'pruner': pruner,
+        'start': 'Page' if warm else 'cold',
+        'startup': startup,
+        # minutes from the search's start to its first trial at 92 % and at 93 % (a cold start's measure: less luck
+        # than the best value alone)
+        'minutes_to': _minutes_to(study, (0.92, 0.93) if family == 'b0' else (0.94, 0.95, 0.955, 0.96)),
+        # the same from the job's start (calibration and study set-up included): what a cold search costs in all
+        'campaign_minutes_to': _minutes_to(study, (0.92, 0.93) if family == 'b0' else (0.94, 0.95, 0.955, 0.96), t0),
+        'family': family,
+        'cap': cap if family != 'b0' else None,
+        'max_epochs': max_epochs if family != 'b0' else None,
+        # the search's own finds, apart from the starting point it was given
+        'best_other_than_start': max(others) if others else None,
+        'others_at_92': sum(v >= 0.92 for v in others),
+        'completed': states.count('COMPLETE'),
+        'pruned': states.count('PRUNED'),
+        'failed': states.count('FAIL'),
+        # the best value as the search went (seconds since its start, value): the yield against time and units
+        'best_by_time': _best_by_time(study),
+        'trials': len(study.trials),
+    }
+
+
 def on_vm(
     n_trials: int = 80,
     study_name: str = 'cifar-on-vm',
@@ -375,42 +409,9 @@ def on_vm(
             log=progress,
         )
     best = study.best_trial
-    states = [t.state.name for t in study.trials]
-    others = [t.value for t in study.trials if t.state.name == 'COMPLETE' and (t.number >= len(warm_points) or not warm)]
-    out = {
-        'best_value': best.value,
-        'best_params': best.params,
-        'best_test_acc': best.user_attrs.get('test_acc'),
-        'best_train_seconds': best.user_attrs.get('train_seconds'),
-        'pruner': pruner,
-        'start': 'Page' if warm else 'cold',
-        'startup': startup,
-        # minutes from the search's start to its first trial at 92 % and at 93 % (a cold start's measure: less luck
-        # than the best value alone)
-        'minutes_to': _minutes_to(study, (0.92, 0.93) if family == 'b0' else (0.94, 0.95, 0.955, 0.96)),
-        # the same from the job's start (calibration and study set-up included): what a cold search costs in all
-        'campaign_minutes_to': _minutes_to(study, (0.92, 0.93) if family == 'b0' else (0.94, 0.95, 0.955, 0.96), t0),
-        'family': family,
-        'cap': cap if family != 'b0' else None,
-        'max_epochs': max_epochs if family != 'b0' else None,
-        # the search's own finds, apart from the starting point it was given
-        'best_other_than_start': max(others) if others else None,
-        'others_at_92': sum(v >= 0.92 for v in others),
-        'completed': states.count('COMPLETE'),
-        'pruned': states.count('PRUNED'),
-        'failed': states.count('FAIL'),
-        # the best value as the search went (seconds since its start, value): the yield against time and units
-        'best_by_time': _best_by_time(study),
-        'trials': len(study.trials),
-        'concurrent': k,
-        'pool': pool,
-        'turns': pool != k,
-        'calibration': table,
-        'calibration_seconds': round(t_cal, 1),
-        'search_seconds': round(time.time() - t0 - t_cal, 1),
-        'campaign_seconds': round(time.time() - t0, 1),
-        'device': best.user_attrs.get('device'),
-    }
+    out = _summary(study, warm_points, t0, warm=warm, pruner=pruner, startup=startup, family=family, cap=cap, max_epochs=max_epochs)
+    out.update(concurrent=k, pool=pool, turns=pool != k, calibration=table, calibration_seconds=round(t_cal, 1))
+    out.update(search_seconds=round(time.time() - t0 - t_cal, 1), campaign_seconds=round(time.time() - t0, 1), device=best.user_attrs.get('device'))
     Path('summary.json').write_text(json.dumps(out, indent=1) + '\n')
     return out
 

@@ -196,7 +196,6 @@ class Run:
 
     def __init__(self, h: dict, seeds: list[int], data: str | None = None, device: str = 'auto') -> None:
         import jax
-        import jax.numpy as jnp
         import numpy as np
 
         from . import jx
@@ -214,6 +213,19 @@ class Run:
         self.x_train, self.y_train = x_train, y_train
         self.x = {s: put(arrays[f'x_{s}']) for s in ('val', 'test')}
         self.y = {s: np.asarray(arrays[f'y_{s}']) for s in ('val', 'test')}
+        S, steps, bs = self._build_state(h, arrays, classes)
+        self._compile(h, S, arrays, classes, steps, bs)
+        self.done, self._w = 0, None
+
+    def _build_state(self, h: dict, arrays: dict, classes: int) -> tuple[Any, int, int]:
+        """The models of every seed, stacked: the training state (parameters, the rest, optimizer state, keys, step
+        counts, the EMA copy) on the device; (the first model's split, steps per epoch, batch size)."""
+        import jax
+        import jax.numpy as jnp
+        import numpy as np
+
+        from . import jx
+
         with jax.default_device(self.dev):
             whitening = None
             if h['whiten']:  # from 5000 training images (the validation images unseen)
@@ -253,6 +265,18 @@ class Run:
             }
             if use_ema:
                 self.st['ema'] = jax.tree.map(jnp.copy, (params, rest))  # (its own buffers: the state is donated)
+        return S, steps, bs
+
+    def _compile(self, h: dict, S: Any, arrays: dict, classes: int, steps: int, bs: int) -> None:
+        """The compiled epoch (a scan of training steps, vmapped over the seeds, the state donated) and the weights to
+        evaluate (schedule-free's averaged ones with batch norm refreshed, the EMA, or the live ones)."""
+        import jax
+        import jax.numpy as jnp
+        import optax
+
+        from . import jx
+
+        use_ema = self.use_ema
         norm = lambda xb: (xb - jnp.asarray(MEAN)) / jnp.asarray(STD)
         mixing = h['mix'] != 'none'
 
@@ -275,7 +299,7 @@ class Run:
             (loss, rest), grads = jax.value_and_grad(loss_fn, has_aux=True)(params, rest)
             tx, _ = jx.optimizer(h, hp, params, hp['total'])
             updates, opt = tx.update(grads, opt, params)
-            params = jx.apply_updates(params, updates)
+            params = optax.apply_updates(params, updates)
             new = {'params': params, 'rest': rest, 'opt': opt, 'key': jax.random.key_data(key), 'n': n + 1}
             if use_ema:
                 new['ema'] = jx.ema_update(carry['ema'], (params, rest), n, hp['ema_decay'])
@@ -308,7 +332,8 @@ class Run:
 
         self._epoch = jax.jit(jax.vmap(epoch, in_axes=(0, None, None, None)), donate_argnums=0)
         self._weights = jax.jit(jax.vmap(weights, in_axes=(0, None)))
-        self.done, self._w = 0, None
+        self._epoch = jax.jit(jax.vmap(epoch, in_axes=(0, None, None, None)), donate_argnums=0)
+        self._weights = jax.jit(jax.vmap(weights, in_axes=(0, None)))
 
     def set(self, **floats) -> None:
         import jax.numpy as jnp
