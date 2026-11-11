@@ -15,6 +15,11 @@ protocols and experiment harnesses stayed with the session and are not part of t
 
 ## What this commit adopts
 
+On landing (2026-11-11) `'auto'` became airbench's default and takes the summed-loss question from
+`airbench.summed_loss` rather than an optimiser list of its own. The evaluation batch became a fixed 500
+(`airbench.EVAL_BATCH`) with no hyperparameter: 2000 also ran out of memory on the 5070 Ti (airbench96), and from 500
+up the time was flat within 4 %. The rest is as below.
+
 - `cifarq.precision` holds `compute_dtype` and `native_bf16`. `precision` gains `'f16'` (true float16) and `'auto'`
   (bfloat16 where the card runs it natively, which is compute capability 8.0 and up, and float16 where it does not).
   `'auto'` uses float16 only under a summed loss (`sgd`, `muon`). That sum is about `batch_size` times a mean loss,

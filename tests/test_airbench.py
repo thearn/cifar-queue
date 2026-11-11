@@ -9,6 +9,19 @@ from cifarq import airbench, jx
 SMALL = {'widths': (16, 32, 32), 'batch_size': 64, 'epochs': 2}
 
 
+def assert_reload_predicts(r: dict, built: dict) -> None:
+    """The saved network, reloaded on the device and in the arithmetic training measured with, gets the test images
+    right as often as training said, give or take two (barely trained, its top logits nearly tie; on a GPU a batch's
+    shape picks the kernels, which round differently)."""
+    from cifarq import precision
+
+    h = r['hyperparameters']
+    dtype = precision.compute_dtype(h['precision'], summed_loss=airbench.summed_loss(h))
+    probs = airbench.Predictor(r['saved'], device=jx.device_name(), dtype=dtype).predict(built['x_test'])
+    right = int((probs.argmax(1) == built['y_test']).sum())
+    assert abs(right - round(r['test_acc'] * len(probs))) <= 2
+
+
 def test_published_parameter_counts():
     count = lambda h: airbench.param_counts(airbench.build(h, abstract=True)[0])
     assert count(airbench.AIRBENCH94)['stored'] == 1972792  # the paper's 1.97 M (the Torch port's count, E1.2)
@@ -51,7 +64,7 @@ def test_saved_network_predicts_what_training_measured(built, tmp_path, extra):
     r = airbench.train(**SMALL, **extra, save=str(tmp_path / 'model'))
     probs = airbench.Predictor(r['saved']).predict(built['x_test'])
     assert probs.shape == (200, 10) and np.allclose(probs.sum(1), 1, atol=1e-5)
-    assert abs((probs.argmax(1) == built['y_test']).mean() - r['test_acc']) <= 2 / len(probs)
+    assert_reload_predicts(r, built)
 
 
 def test_distillation_from_a_saved_teacher(built, tmp_path):
@@ -75,8 +88,7 @@ def test_distillation_from_a_saved_teacher(built, tmp_path):
 )
 def test_other_families_train_save_and_load(built, tmp_path, arch, kw):
     r = airbench.train(**SMALL, arch=arch, arch_kw=kw, tta_level=1, save=str(tmp_path / 'm'))
-    probs = airbench.Predictor(r['saved']).predict(built['x_test'])
-    assert abs((probs.argmax(1) == built['y_test']).mean() - r['test_acc']) <= 2 / len(probs)
+    assert_reload_predicts(r, built)
     assert r['params_trainable'] < r['params']  # (batch norm's scale frozen)
 
 
@@ -130,8 +142,7 @@ def test_flip_equivariant_groups_are_invariant_to_mirroring():
 )
 def test_methods_train_save_and_reload(built, tmp_path, extra):
     r = airbench.train(**{**SMALL, **extra}, save=str(tmp_path / 'm'))
-    probs = airbench.Predictor(r['saved']).predict(built['x_test'])
-    assert abs((probs.argmax(1) == built['y_test']).mean() - r['test_acc']) <= 2 / len(probs)
+    assert_reload_predicts(r, built)
     if 'tails' in extra:
         assert r['epochs_charged'] == 4 and r['history'][-1]['epoch'] == 'tails-averaged'
     if 'tta_gate' in extra:

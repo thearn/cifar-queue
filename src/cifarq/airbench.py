@@ -31,8 +31,8 @@ whitening weight (frozen) and bias (trained for ``whiten_bias_epochs``), the fil
 
 Differences from the Torch port, all numerical: ``precision`` 'fp16' and 'amp' both mean float32 weights and
 optimiser state with bfloat16 arithmetic on a GPU (Torch's 'fp16' kept the weights themselves in float16); on a CPU
-the arithmetic is float32, as before. 'auto' picks bfloat16 where the card runs it natively and float16 where it
-does not (a Tesla T4), and 'f16' asks for float16 outright: see :mod:`cifarq.precision`. Batch norm's running
+the arithmetic is float32, as before. 'auto', the default, picks bfloat16 where the card runs it natively and float16
+where it does not (a Tesla T4), and 'f16' asks for float16 outright: see :mod:`cifarq.precision`. Batch norm's running
 variance is the biased batch variance (Torch's is unbiased, a factor n/(n-1) at n = batch x pixels). The whitening
 and PCA eigenvectors are computed in float64 (Torch: float32). The loss is computed in float32 under every precision.
 """
@@ -58,6 +58,11 @@ if TYPE_CHECKING:
     from flax import nnx
     from jax.typing import DTypeLike
     from numpy.typing import ArrayLike as NPArrayLike
+
+# Images an evaluation forward pass. Every image's logits come from itself alone, so it moves no accuracy, only memory
+# and time: 2000 x 6 views ran out of memory on 16 GB cards (airbench96 on the 5070 Ti, airbench94 on a T4), and from
+# 500 up the time is flat within 4 % (5070 Ti, 2026-11-11: airbench96 0.70 s at 500, 0.69 s at 1500, 10k images x 6).
+EVAL_BATCH = 500
 
 DEFAULTS = dict(
     # network
@@ -105,7 +110,7 @@ DEFAULTS = dict(
     kd_teacher='',
     kd_weight=0.0,
     kd_temp=4.0,
-    precision='fp16',
+    precision='auto',
     eq_group='d1',
     blur_pool=False,
     se=0,
@@ -115,7 +120,6 @@ DEFAULTS = dict(
     filter_proxy_epochs=0.0,
     muon_lr=0.24,
     muon_momentum=0.6,
-    eval_batch=0,
     test='open',
     seed=0,
 )
@@ -428,6 +432,12 @@ def tta_logits(apply: Callable[[jax.Array], jax.Array], x: jax.Array, level: int
     return 0.5 * mirror(x) + 0.5 * shifted
 
 
+def summed_loss(h: dict) -> bool:
+    """Whether a run's loss is summed over the batch (``sgd`` and ``muon``, airbench's own) rather than its mean
+    (``adamw``): it sets the loss, and whether ``precision='auto'`` may use float16 (:func:`cifarq.precision.compute_dtype`)."""
+    return h['optimizer'] in ('sgd', 'muon')
+
+
 def _check(hyperparameters: dict) -> dict:
     unknown = set(hyperparameters) - set(DEFAULTS)
     if unknown:
@@ -507,7 +517,7 @@ def train(data: str | None = None, save: str | None = None, report: Any = None, 
 
     jx.cache()
     dev = jx.pick(device)
-    dtype = precision.compute_dtype(h, device)
+    dtype = precision.compute_dtype(h['precision'], device, summed_loss=summed_loss(h))
     with jax.default_device(dev):
         return _train(h, data, save, report, device, dev, dtype, jax, jnp, np, optax, jx, dataset)
 
@@ -529,7 +539,7 @@ def _train(
 ) -> dict:
     from flax import nnx
 
-    from . import augment, methods, precision
+    from . import augment, methods
 
     arrays = dataset.load(data)
     mean_, std_ = np.asarray(MEAN, np.float32), np.asarray(STD, np.float32)
@@ -545,7 +555,7 @@ def _train(
 
     net, whiten = build(h, dtype)
     counts = param_counts(net, h['bn_scale'])
-    sgd_like = h['optimizer'] in ('sgd', 'muon')
+    sgd_like = summed_loss(h)
     proxy, proxy_info = None, {}
     if h['filter_keep'] < 1:
         # D1, data filtering (airbench96_faster's idea, with a proxy trained first and then fixed): a small network
@@ -735,12 +745,9 @@ def _train(
     fwd_jit = jax.jit(fwd, static_argnums=(3, 4))
 
     def accuracy(carry: dict, x: np.ndarray, y: np.ndarray, level: int, gate: float = 0.0) -> tuple[float, float]:
-        """(accuracy at ``level``'s views, the share of images given them: 1 unless MT6's ``gate`` is set).
-
-        ``eval_batch`` images a forward pass (0: chosen from the device's memory, see ``eval_batch_size``). The batch
-        only divides the work: every image's logits are computed from itself alone, so the value does not depend on it.
-        """
-        eb = precision.eval_batch_size(h, dev)
+        """(accuracy at ``level``'s views, the share of images given them: 1 unless MT6's ``gate`` is set), ``EVAL_BATCH``
+        images a forward pass."""
+        eb = EVAL_BATCH
         correct, shares, nn_ = 0, 0.0, len(y)
         for a, b in jx.batches(nn_, eb):
             xb = jnp.asarray(x[a:b], dtype)
