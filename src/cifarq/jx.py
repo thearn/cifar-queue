@@ -277,7 +277,7 @@ def from_host(tree: Any, device: jax.Device | None = None) -> Any:
     return jax.tree.map(one, tree, is_leaf=lambda a: isinstance(a, HostKey))
 
 
-def eval_params(opt_state: Any, params: Any, schedule_free: bool) -> Any:
+def eval_params(opt_state: optax.OptState, params: optax.Params, schedule_free: bool) -> optax.Params:
     """The weights to evaluate: the schedule-free average where the optimiser keeps one, else the weights."""
     if not schedule_free:
         return params
@@ -307,9 +307,9 @@ def cross_entropy(logits: jax.Array, y: jax.Array, classes: int, smoothing: Arra
 # ---- images --------------------------------------------------------------------------------------------------
 
 
-def normalise(x_uint8: ArrayLike, mean: ArrayLike, std: ArrayLike) -> jax.Array:
+def normalise(x_uint8: jax.Array | np.ndarray, mean: ArrayLike, std: ArrayLike) -> jax.Array:
     """uint8 NHWC images to float32, per-channel standardised."""
-    return (x_uint8.astype(jnp.float32) / 255 - jnp.asarray(mean)) / jnp.asarray(std)
+    return (jnp.asarray(x_uint8.astype(jnp.float32) / 255) - jnp.asarray(mean)) / jnp.asarray(std)
 
 
 def affine(x: jax.Array, theta: jax.Array) -> jax.Array:

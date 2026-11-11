@@ -285,16 +285,16 @@ class Run:
             key, ka, km = jax.random.split(jax.random.wrap_key_data(key), 3)
             xb = augment(ka, x_data[idx].astype(jnp.float32) / 255, h, hp)
             yb = y_data[idx]
+            ce = lambda out, y: jx.cross_entropy(out, y, classes, hp['label_smoothing'])
             if mixing:
                 xb, other, lam = _mix(km, xb, h, hp)
+                objective = lambda out: lam * ce(out, yb) + (1 - lam) * ce(out, yb[other])
+            else:
+                objective = lambda out: ce(out, yb)
 
             def loss_fn(p: Any, r: Any) -> tuple[jax.Array, Any]:
                 out, new_rest = S.apply(p, r, norm(xb), train=True)
-                out = out * hp['logit_scale']
-                loss = jx.cross_entropy(out, yb, classes, hp['label_smoothing'])
-                if mixing:
-                    loss = lam * loss + (1 - lam) * jx.cross_entropy(out, yb[other], classes, hp['label_smoothing'])
-                return loss, new_rest
+                return objective(out * hp['logit_scale']), new_rest
 
             (loss, rest), grads = jax.value_and_grad(loss_fn, has_aux=True)(params, rest)
             tx, _ = jx.optimizer(h, hp, params, hp['total'])
@@ -330,8 +330,6 @@ class Run:
                 return p, refresh(p, st['rest'], x_data)
             return st['ema'] if use_ema else (st['params'], st['rest'])
 
-        self._epoch = jax.jit(jax.vmap(epoch, in_axes=(0, None, None, None)), donate_argnums=0)
-        self._weights = jax.jit(jax.vmap(weights, in_axes=(0, None)))
         self._epoch = jax.jit(jax.vmap(epoch, in_axes=(0, None, None, None)), donate_argnums=0)
         self._weights = jax.jit(jax.vmap(weights, in_axes=(0, None)))
 
@@ -453,7 +451,7 @@ def _run(h: dict, seeds: list[int], data: str | None, report: Any, device: str, 
             'history': history,
             'hyperparameters': {**h, 'seed': s},
         }
-        if pruned:
+        if test is None:  # (pruned)
             row.update(pruned=True, progress=round(100 * len(history) / h['epochs']), epochs_run=len(history))
         else:
             row.update(test_acc=round(test[i], 4), params=run.params())
