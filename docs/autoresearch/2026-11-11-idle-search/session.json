@@ -18,11 +18,12 @@
   },
   {
    "id": "M3",
-   "state": "planned",
+   "state": "done",
    "title": "A new best confirmed over seeds",
    "blocked_by": [
     "M2b"
-   ]
+   ],
+   "note": "seeds 2-6, 1 view: eqaug2 104 95.85 % at 40 ep (+0.20 pp over control, under the 0.3 tolerance), 96.20 +- 0.17 % at 100 ep (+0.20, p 0.07); batch 256 = 512"
   },
   {
    "id": "M1b",
@@ -40,15 +41,15 @@
   },
   {
    "id": "M2b",
-   "state": "active",
+   "state": "done",
    "title": "Second study over reworked ranges (eqaug2), warm from the first's 43 fitting trials",
-   "note": "job 4458, started 2026-11-12 08:45, 24 h budget; RandAugment magnitude 8-30, batch 256/512, cutout 0-12, wider bn momentum, smoothing, decay, distillation weight and first width"
+   "note": "stopped by the user 2026-11-12 13:27 (job 4458, 4.7 h): 69 complete incl. 43 seeded; best trial 104 95.93 % two-seed; batch 256 and kd 0.39-0.45 led late"
   }
  ],
  "goals": [
   "Use idle local GPU time to find a better one-view CIFAR-10 model under 2 M parameters than the flip-equivariant airbench finalists"
  ],
- "updated": "2026-11-12T08:49:36",
+ "updated": "2026-11-12T15:02:32",
  "kind": "model",
  "scoreboard": [
   {
@@ -63,20 +64,164 @@
     "label": "best known when seeded (24 h study trial 113)"
    },
    "best": {
-    "value": 0.9587,
-    "job": "trial 113",
-    "when": "2026-11-12T05:01:31"
+    "value": 0.9593,
+    "job": "trial 104",
+    "when": "2026-11-12T12:04:54"
    }
   }
  ],
- "now": "Second idle study running (job 4458, eqaug2 space, started 2026-11-12 08:45, 24 h budget): the first study's 43 trials that fit the reworked ranges are known points, so TPE starts from its model of them. Best known 95.87 % (first study's trial 113); target 0.96 two-seed one-view val at 40 epochs.",
- "next": "Watch whether RandAugment above magnitude 15, batch 256 or less cutout beat 95.87; then the 5-seed retrain at 40 and 100 epochs",
+ "now": "Tuning stopped at the user's request. Confirmation over 5 fresh seeds: eqaug2 trial 104 scores 95.85 % at 40 epochs and 96.20 % at 100 (control 95.65 / 96.00), a consistent +0.2 pp but under the contract's 0.3 pp tolerance. Test opened by mistake in the confirmation runs (logged).",
+ "next": "Next idle session: eqaug3 seeded from eqaug2-trials.jsonl (STATUS.md has the command), or the M4 front",
  "glossary": {
   "eqaug": "the idle search's space: flip-equivariant airbench, 40 epochs, two seeds, policy augmentation open (families.eqaug_space)",
   "FIN": "the flip-equivariant airbench finalist: 128/112/144, 1.94 M parameters",
   "eqaug2": "the second idle search space (families.eqaug2_space): eqaug with SRF fixed on, policy augmentation always on, and the edges the first study hit widened"
  },
  "leaderboards": [
+  {
+   "name": "eqaug2 00004-on_vm",
+   "metric": "val_1view",
+   "direction": "max",
+   "rows": [
+    {
+     "trial": 104,
+     "value": 0.9593,
+     "test": null,
+     "params": {
+      "w1": 184,
+      "w2": 144,
+      "w3": 144,
+      "batch_size": 256,
+      "lr": 10.049687764386114,
+      "momentum": 0.7501313491907174,
+      "weight_decay": 0.00735959309631798,
+      "bias_scaler": 67.31782615969527,
+      "label_smoothing": 0.0674499606630374,
+      "warmup_frac": 0.10537265200989075,
+      "final_lr_frac": 0.004996526165621639,
+      "bn_momentum": 0.027692352334520963,
+      "translate": 4,
+      "cutout": 8,
+      "scaling_factor": 0.08046722930890118,
+      "augment": "randaugment",
+      "augment_m": 16,
+      "kd_weight": 0.4312360519765482,
+      "kd_temp": 3.6199782285623203
+     }
+    },
+    {
+     "trial": 76,
+     "value": 0.9589,
+     "test": null,
+     "params": {
+      "w1": 168,
+      "w2": 144,
+      "w3": 144,
+      "batch_size": 512,
+      "lr": 8.66344155502835,
+      "momentum": 0.7132655568787309,
+      "weight_decay": 0.004928628069921562,
+      "bias_scaler": 62.18372534352712,
+      "label_smoothing": 0.13251161083972315,
+      "warmup_frac": 0.15345114931456844,
+      "final_lr_frac": 0.011572837395620303,
+      "bn_momentum": 0.036927182925738794,
+      "translate": 3,
+      "cutout": 8,
+      "scaling_factor": 0.06470271666092224,
+      "augment": "randaugment",
+      "augment_m": 15,
+      "kd_weight": 0.3923905527142816,
+      "kd_temp": 4.100831090641607
+     }
+    },
+    {
+     "trial": 88,
+     "value": 0.9588,
+     "test": null,
+     "params": {
+      "w1": 184,
+      "w2": 144,
+      "w3": 144,
+      "batch_size": 256,
+      "lr": 8.749539008686776,
+      "momentum": 0.7470838481733413,
+      "weight_decay": 0.005439497143419183,
+      "bias_scaler": 110.17198245818875,
+      "label_smoothing": 0.08430852024247817,
+      "warmup_frac": 0.12296437538924007,
+      "final_lr_frac": 0.014017439131771899,
+      "bn_momentum": 0.02593515798807164,
+      "translate": 4,
+      "cutout": 8,
+      "scaling_factor": 0.0875534424388159,
+      "augment": "randaugment",
+      "augment_m": 15,
+      "kd_weight": 0.4504163192539428,
+      "kd_temp": 4.3589056659803544
+     }
+    },
+    {
+     "trial": 22,
+     "value": 0.9587,
+     "test": null,
+     "params": {
+      "w1": 168,
+      "w2": 144,
+      "w3": 136,
+      "batch_size": 512,
+      "lr": 7.948391360766423,
+      "momentum": 0.7510156418623907,
+      "weight_decay": 0.005766129107496083,
+      "bias_scaler": 83.70596183992646,
+      "label_smoothing": 0.1171532806506968,
+      "warmup_frac": 0.13803191416815652,
+      "final_lr_frac": 0.015404565438733876,
+      "bn_momentum": 0.03849078777437703,
+      "translate": 3,
+      "cutout": 8,
+      "scaling_factor": 0.056672194975116136,
+      "augment": "randaugment",
+      "augment_m": 14,
+      "kd_weight": 0.32936024260238433,
+      "kd_temp": 4.445450681694379
+     }
+    },
+    {
+     "trial": 101,
+     "value": 0.9586,
+     "test": null,
+     "params": {
+      "w1": 184,
+      "w2": 144,
+      "w3": 144,
+      "batch_size": 256,
+      "lr": 9.205243605447507,
+      "momentum": 0.7655646652345403,
+      "weight_decay": 0.005433931133999757,
+      "bias_scaler": 92.81865348281875,
+      "label_smoothing": 0.10366512907531276,
+      "warmup_frac": 0.13539804929070207,
+      "final_lr_frac": 0.012670123537147904,
+      "bn_momentum": 0.01967689183885406,
+      "translate": 4,
+      "cutout": 8,
+      "scaling_factor": 0.093723328600826,
+      "augment": "randaugment",
+      "augment_m": 15,
+      "kd_weight": 0.38395653162483645,
+      "kd_temp": 4.27639673758209
+     }
+    }
+   ],
+   "counts": {
+    "complete": 69,
+    "pruned": 69,
+    "running": 2
+   },
+   "columns": [],
+   "job": 4458
+  },
   {
    "name": "eqaug 00003-on_vm",
    "metric": "val_1view",

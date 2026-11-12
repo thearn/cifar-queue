@@ -255,18 +255,35 @@ def session_board(board: str, trials: list, metric: str, family: str, job=None) 
         print(f'(leaderboard not updated: {e})', flush=True)
 
 
-def seeded_study(src_db: Path, space_fn, out: Path, study_name: str = 'cifar-on-vm') -> tuple[int, int, float | None]:
-    """A new study database ``out`` (named ``study_name``, as ``tune.on_vm`` opens it) holding the completed trials of
-    the study in ``src_db`` that fit ``space_fn`` (``known_point``), as known points with their values: a search over
-    reworked ranges continues from what the old one measured instead of from a few starting points. (kept, offered,
-    the best kept value)."""
+def completed_trials(source: Path) -> list:
+    """The completed trials of a study: its SQLite database, or its ``export_trials.py`` export (``.jsonl``, a row a
+    trial with its distributions, which git keeps where ``results/`` is not kept), as Optuna's frozen trials."""
     import optuna
 
-    old, tmp = read_study(src_db)
+    if source.suffix == '.jsonl':
+        out = []
+        for line in source.read_text().splitlines():
+            row = json.loads(line)
+            dists = {k: optuna.distributions.json_to_distribution(v) for k, v in row['distributions'].items()}
+            t = optuna.trial.create_trial(params=row['params'], distributions=dists, value=row['value'], user_attrs=row.get('user_attrs', {}))
+            t.number = row['number']
+            out.append(t)
+        return out
+    old, tmp = read_study(source)
     try:
-        done = [t for t in old.trials if t.state.name == 'COMPLETE' and t.value is not None]
+        return [t for t in old.trials if t.state.name == 'COMPLETE' and t.value is not None]
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def seeded_study(src_db: Path, space_fn, out: Path, study_name: str = 'cifar-on-vm') -> tuple[int, int, float | None]:
+    """A new study database ``out`` (named ``study_name``, as ``tune.on_vm`` opens it) holding the completed trials of
+    the study in ``src_db`` (a database or an export: ``completed_trials``) that fit ``space_fn`` (``known_point``), as
+    known points with their values: a search over reworked ranges continues from what the old one measured instead of
+    from a few starting points. (kept, offered, the best kept value)."""
+    import optuna
+
+    done = completed_trials(src_db)
     out.parent.mkdir(parents=True, exist_ok=True)
     new = optuna.create_study(study_name=study_name, storage=f'sqlite:///{out}', direction='maximize')
     kept, best = 0, None

@@ -124,3 +124,32 @@ def test_the_second_space_starts_from_the_first_ones_best_and_takes_its_fitting_
     assert known_point(best, space) == families.WARM['eqaug2'][0]  # (srf: fixed at the same value, dropped)
     assert known_point({**best, 'srf': False}, space) is None  # fixed at another value
     assert known_point({**best, 'augment': 'none'}, space) is None  # no longer a choice
+
+
+def test_the_third_space_settles_augmentation_and_reads_an_exported_study(tmp_path):
+    import functools
+    import json
+    import sys
+    from pathlib import Path
+
+    from cifarq import families
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'pipeline'))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'pipeline' / 'tools'))
+    from common import completed_trials, known_point
+    from export_trials import rows
+
+    space = functools.partial(families.eqaug3_space, kd='teacher')
+    assert [tune.misfit(p, space) for p in families.WARM['eqaug3']] == [[], [], []]
+    old = {**families.WARM['eqaug2'][0]}  # (RandAugment, cutout 8: fixed at the same values, dropped)
+    assert known_point(old, space) == {k: v for k, v in old.items() if k not in ('augment', 'cutout')}
+    assert known_point({**old, 'cutout': 12}, space) is None
+    assert space(optuna.trial.FixedTrial({**families.WARM['eqaug3'][0], 'batch_size': 128}))['batch_size'] == 128
+    fixed = optuna.trial.FixedTrial(families.WARM['eqaug2'][0])
+    families.eqaug2_space(fixed, kd='teacher')
+    t = optuna.trial.create_trial(params=families.WARM['eqaug2'][0], distributions=fixed.distributions, value=0.95, user_attrs={'device': 'x'})
+    t.number = 7
+    out = tmp_path / 'trials.jsonl'
+    out.write_text(''.join(json.dumps(r) + '\n' for r in rows([t])))
+    back = completed_trials(out)
+    assert [(b.number, b.value, b.params, b.user_attrs) for b in back] == [(7, 0.95, t.params, {'device': 'x'})]

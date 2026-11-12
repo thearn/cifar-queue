@@ -42,6 +42,7 @@ def main():
     ap.add_argument('--params', help="a JSON file of the function's arguments")
     sets_arg(ap)
     ap.add_argument('--seeds', type=int, nargs='+', default=[0])
+    ap.add_argument('--open-test', action='store_true', help='score the test set too (default: sealed, test=sealed; a look goes in data/holdout)')
     ap.add_argument('--save', action='store_true', help="keep each seed's network (in its job's directory)")
     ap.add_argument('--stage', default='train', help="configs/compute.toml's stage for the hints (default: train)")
     ap.add_argument('--gpu-mb', type=int, help="each job's peak GPU memory for the queue's admission (7000 on the 4060: alone)")
@@ -56,6 +57,8 @@ def main():
     if a.params:
         params.update(json.loads(Path(a.params).read_text()))
     params.update(parse_sets(a.set))
+    if not a.open_test:  # (2026-11-12: 30 confirmation runs scored test unasked; open_test.py is the logged look)
+        params.setdefault('test', 'sealed')
     out = RESULTS / 'autoresearch' / a.experiment
     out.mkdir(parents=True, exist_ok=True)
     snap, prov = snapshot(a.experiment), provenance()  # (as submitted: commits made while it runs are not its code)

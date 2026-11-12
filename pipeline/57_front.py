@@ -31,7 +31,7 @@ import time
 from pathlib import Path
 
 import optuna
-from common import RESULTS, dataset_file, executor, read_study, record, stage_targets, targets_arg
+from common import RESULTS, completed_trials, dataset_file, executor, record, stage_targets, targets_arg
 from runq.search.hpo import optuna_optimize
 
 from cifarq import families
@@ -83,13 +83,9 @@ def _known(space: str, seed_from: Path | None) -> list[dict]:
         return [{'params': s['params'], 'values': s['values'], 'source': s['source'], 'seeds': s['seeds']} for s in families.front_seeds(RESULTS)]
     if seed_from is None:
         return []
-    old, tmp = read_study(seed_from)
-    try:
-        done = [t for t in old.trials if t.state.name == 'COMPLETE']
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    done = completed_trials(seed_from)
     hp = lambda t: families.frontaug_space(optuna.trial.FixedTrial(t.params), kd='teacher')
-    return [{'params': t.params, 'values': [t.value, families.macs_of(hp(t))], 'source': f'{seed_from.parent.name} trial {t.number}'} for t in done]
+    return [{'params': t.params, 'values': [t.value, families.macs_of(hp(t))], 'source': f'{seed_from.name} trial {t.number}'} for t in done]
 
 
 def study_for(storage: str, seed: int, resume: bool, space: str = 'plain', seed_from: Path | None = None) -> optuna.Study:

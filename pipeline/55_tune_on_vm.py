@@ -8,7 +8,8 @@ job's directory; progress.json and study.db come back every two minutes while it
     python pipeline/55_tune_on_vm.py --target colab:cifar-g4 --cold --pruner rungs --minutes 45
     python pipeline/55_tune_on_vm.py --target local --concurrent 1 --trials 4 --minutes 5      # the 4060, as a test
     python pipeline/55_tune_on_vm.py --resume                            # the latest run's study, on a new job
-    python pipeline/55_tune_on_vm.py --target local --family eqaug2 --seeds 2 --kd results/models/ab96-45k-s0 --seed-from results/eqaug-24h-study.db
+    python pipeline/55_tune_on_vm.py --target local --family eqaug3 --seeds 2 --kd results/models/ab96-45k-s0 \
+        --pruner rungs --minutes 1440 --seed-from docs/autoresearch/2026-11-11-idle-search/eqaug2-trials.jsonl
     python pipeline/55_tune_on_vm.py --target colab:cifar-g4 --pruner rungs --minutes 45 --start-from best
 """
 

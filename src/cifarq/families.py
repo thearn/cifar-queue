@@ -187,14 +187,17 @@ def eqaug_space(
     return refuse_over_cap(trial, p)
 
 
-def eqaug2_space(trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
+def eqaug2_space(
+    trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '', batches: tuple[int, ...] = (256, 512), settled: bool = False
+) -> dict:
     """The second idle-time space (2026-11-12), from the 24 h eqaug study's best 20 of 71 complete trials. Fixed where
     they all agreed: structured receptive fields on (20 of 20), policy augmentation on (no augmentation peaked at
     95.29 % against 95.87 %). Widened where they sat at an edge: RandAugment's magnitude (11-15 of 2-15: now 8-30),
     batch (all 512, the smaller choice: now 256 or 512), cutout (8, the smallest: now 0-12), batch-norm momentum
     (0.036-0.046 of 0.035-0.12), label smoothing (0.11-0.16 of 0.1-0.3), weight decay (0.0051-0.0073 of 0.004-0.015),
     distillation weight (0.25-0.38 of 0-0.4), the first width (168 every time: now 128-200). Still 40 epochs and two
-    seeds, so the old study's trials enter this one as known points (``55_tune_on_vm.py --seed-from``)."""
+    seeds, so the old study's trials enter this one as known points (``55_tune_on_vm.py --seed-from``). ``batches``
+    and ``settled`` (RandAugment and cutout 8 fixed): ``eqaug3_space``."""
     c, s = trial.suggest_categorical, trial.suggest_float
     p = {
         'arch': 'airbench',
@@ -203,7 +206,7 @@ def eqaug2_space(trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 
         'srf': True,
         'widths': (c('w1', list(range(128, 208, 8))), c('w2', list(range(96, 200, 8))), c('w3', list(range(96, 232, 8)))),
         'epochs': float(max_epochs),
-        'batch_size': c('batch_size', [256, 512]),
+        'batch_size': c('batch_size', list(batches)),
         'lr': s('lr', 5.0, 14.0, log=True),
         'momentum': s('momentum', 0.65, 0.9),
         'weight_decay': s('weight_decay', 0.002, 0.012, log=True),
@@ -213,19 +216,27 @@ def eqaug2_space(trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 
         'final_lr_frac': s('final_lr_frac', 0.0, 0.05),
         'bn_momentum': s('bn_momentum', 0.015, 0.08, log=True),
         'translate': c('translate', [2, 3, 4]),
-        'cutout': c('cutout', [0, 4, 8, 12]),
+        'cutout': 8 if settled else c('cutout', [0, 4, 8, 12]),
         'whiten_bias_epochs': 3,
         'scaling_factor': s('scaling_factor', 1 / 30, 1 / 10, log=True),
         'tta_level': 0,
         'lookahead': True,
         'param_cap': cap,
-        'augment': c('augment', ['ta_wide', 'randaugment']),
+        'augment': 'randaugment' if settled else c('augment', ['ta_wide', 'randaugment']),
     }
     if p['augment'] == 'randaugment':
         p['augment_m'] = trial.suggest_int('augment_m', 8, 30)
     if kd:
         p.update(kd_teacher=kd, kd_weight=s('kd_weight', 0.1, 0.6), kd_temp=s('kd_temp', 2.0, 8.0, log=True))
     return refuse_over_cap(trial, p)
+
+
+def eqaug3_space(trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
+    """The third idle-time space (prepared 2026-11-12), from the eqaug2 study (69 complete, best 95.93 %): its best 12
+    trials all used RandAugment and cutout 8 (now fixed), and batch 256, the smallest choice, took 5 of the 12 and
+    every late lead (now 128, 256 or 512). Every other parameter of the 12 sat inside its range: unchanged. The eqaug2
+    export enters as known points (``--seed-from docs/autoresearch/2026-11-11-idle-search/eqaug2-trials.jsonl``)."""
+    return eqaug2_space(trial, cap, max_epochs, kd, batches=(128, 256, 512), settled=True)
 
 
 def frontaug_space(trial: optuna.Trial, kd: str = '', max_epochs: float = 40) -> dict:
@@ -259,6 +270,7 @@ SPACES = {
     'eqairbench': eqairbench_space,
     'eqaug': eqaug_space,
     'eqaug2': eqaug2_space,
+    'eqaug3': eqaug3_space,
 }
 
 # airbench94's recipe (1.97 M, widths 64/256/256) as a point of the airbench space, at the cap's epochs
@@ -374,7 +386,7 @@ CALIBRATE = {
     'eqairbench': {'epochs': 2, 'widths': (128, 112, 144), 'depth': 3, 'flip_eq': 2},
 }
 CALIBRATE['eqaug'] = CALIBRATE['eqairbench']
-CALIBRATE['eqaug2'] = CALIBRATE['eqairbench']
+CALIBRATE['eqaug2'] = CALIBRATE['eqaug3'] = CALIBRATE['eqairbench']
 # the 24 h eqaug study's best three (trials 113, 138, 110: 95.87, 95.85, 95.82 % two-seed one-view validation)
 WARM['eqaug2'] = [
     {
@@ -554,3 +566,65 @@ def front_seeds(results: str | Path) -> list[dict]:
                 {'params': params, 'values': [sum(vals) / len(vals), macs_of(p)], 'source': f'{sub}/{name}', 'seeds': [r['seed'] for r in d['runs']]}
             )
     return out
+
+
+# the eqaug2 study's best three (trials 104, 76, 88: 95.93, 95.89, 95.88 % two-seed one-view validation)
+WARM['eqaug3'] = [
+    {
+        'w1': 184,
+        'w2': 144,
+        'w3': 144,
+        'batch_size': 256,
+        'lr': 10.049688,
+        'momentum': 0.750131,
+        'weight_decay': 0.00736,
+        'bias_scaler': 67.317826,
+        'label_smoothing': 0.06745,
+        'warmup_frac': 0.105373,
+        'final_lr_frac': 0.004997,
+        'bn_momentum': 0.027692,
+        'translate': 4,
+        'scaling_factor': 0.080467,
+        'augment_m': 16,
+        'kd_weight': 0.431236,
+        'kd_temp': 3.619978,
+    },
+    {
+        'w1': 168,
+        'w2': 144,
+        'w3': 144,
+        'batch_size': 512,
+        'lr': 8.663442,
+        'momentum': 0.713266,
+        'weight_decay': 0.004929,
+        'bias_scaler': 62.183725,
+        'label_smoothing': 0.132512,
+        'warmup_frac': 0.153451,
+        'final_lr_frac': 0.011573,
+        'bn_momentum': 0.036927,
+        'translate': 3,
+        'scaling_factor': 0.064703,
+        'augment_m': 15,
+        'kd_weight': 0.392391,
+        'kd_temp': 4.100831,
+    },
+    {
+        'w1': 184,
+        'w2': 144,
+        'w3': 144,
+        'batch_size': 256,
+        'lr': 8.749539,
+        'momentum': 0.747084,
+        'weight_decay': 0.005439,
+        'bias_scaler': 110.171982,
+        'label_smoothing': 0.084309,
+        'warmup_frac': 0.122964,
+        'final_lr_frac': 0.014017,
+        'bn_momentum': 0.025935,
+        'translate': 4,
+        'scaling_factor': 0.087553,
+        'augment_m': 15,
+        'kd_weight': 0.450416,
+        'kd_temp': 4.358906,
+    },
+]
