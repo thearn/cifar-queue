@@ -18,12 +18,15 @@ import shutil
 import sqlite3
 import tempfile
 import time
+import tomllib
 from pathlib import Path
 
 import optuna
 from runq.queue.collect import job_dir  # (queue jobs' directories since 2026-11-11)
 
 RESULTS = Path(__file__).resolve().parents[2] / 'results'
+# (job_dir names the session's folder: the project's own, as the stages set it, not the shell's)
+os.environ.setdefault('RUNQ_SESSION', tomllib.loads((RESULTS.parent / 'configs' / 'compute.toml').read_text())['session'])
 KEYS = ('width', 'epochs', 'optimizer', 'sgd_lr', 'adamw_lr', 'batch_size', 'activation', 'mix', 'ema')
 
 
