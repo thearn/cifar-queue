@@ -96,3 +96,13 @@ def test_the_standing_ranks_complete_trials_and_counts_every_state():
     rows, counts = tune.standing(study.trials, n=2)
     assert [r['value'] for r in rows] == [0.95, 0.93] and set(rows[0]['params']) == {'x'}
     assert counts == {'complete': 3, 'pruned': 1, 'failed': 1, 'running': 1}
+
+
+def test_the_augmented_front_space_holds_every_eqaug_point():
+    import functools
+
+    from cifarq import families
+
+    space = functools.partial(families.frontaug_space, kd='teacher')
+    assert [tune.misfit(p, space) for p in families.WARM['eqaug']] == [[], []]
+    assert tune.misfit({**families.WARM['eqaug'][0], 'augment': 'randaugment', 'augment_m': 30, 'w1': 48}, space) == []

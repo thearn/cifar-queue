@@ -167,21 +167,32 @@ def eqairbench_space(
     return p
 
 
-def eqaug_space(trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
+def eqaug_space(
+    trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '', lows: tuple[int, int, int] = (96, 96, 112), m_max: int = 15
+) -> dict:
     """Session 2026-11-11-idle-search: ``eqairbench_space`` with what earlier sessions settled fixed and what they never
     measured opened. Flip equivariance in the last two groups (1 never led); policy augmentation (TrivialAugment wide,
     RandAugment), off in every earlier eqairbench study, while one-view accuracy saturated past 80 epochs, a sign of
     regularisation; distillation's weight down to none. A fixed, short ``max_epochs`` (40) for idle-time trials; a
-    point over ``cap`` is refused before it runs (``refuse_over_cap``)."""
+    point over ``cap`` is refused before it runs (``refuse_over_cap``). ``lows`` and ``m_max``: the narrowest widths and
+    RandAugment's strongest magnitude (of 30), wider for ``frontaug_space``."""
     c, s = trial.suggest_categorical, trial.suggest_float
-    p = {'arch': 'airbench', 'depth': 3, 'flip_eq': 2, 'srf': c('srf', [False, True]), 'widths': _widths(trial, (96, 96, 112))}
+    p = {'arch': 'airbench', 'depth': 3, 'flip_eq': 2, 'srf': c('srf', [False, True]), 'widths': _widths(trial, lows)}
     p.update(_eq_recipe(trial, max_epochs), param_cap=cap)
     p['augment'] = c('augment', ['none', 'ta_wide', 'randaugment'])
     if p['augment'] == 'randaugment':
-        p['augment_m'] = trial.suggest_int('augment_m', 2, 15)
+        p['augment_m'] = trial.suggest_int('augment_m', 2, m_max)
     if kd:
         p.update(kd_teacher=kd, kd_weight=s('kd_weight', 0.0, 0.4), kd_temp=s('kd_temp', 2.0, 8.0, log=True))
     return refuse_over_cap(trial, p)
+
+
+def frontaug_space(trial: optuna.Trial, kd: str = '', max_epochs: float = 40) -> dict:
+    """The accuracy / MACs front with policy augmentation (session 2026-11-11-idle-search): ``eqaug_space`` with the
+    front's widths (down to half the finalist's) and RandAugment's magnitude up to its maximum, 30 (the 24 h eqaug
+    study's best 15 trials all sat at 13-15, the top of its range). Every point of the 2026-11-05 front trained without
+    policy augmentation."""
+    return eqaug_space(trial, max_epochs=max_epochs, kd=kd, lows=FRONT_LOWS, m_max=30)
 
 
 def refuse_over_cap(trial: optuna.Trial, p: dict) -> dict:

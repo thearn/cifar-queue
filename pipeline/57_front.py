@@ -14,6 +14,14 @@ spot L4), so the search is also a measure of those providers (runq hours, runq l
     python pipeline/57_front.py --trials 16                          # the study (results/front-study.db)
     python pipeline/57_front.py --trials 8 --resume                  # more trials, after a driver died or to extend
     python pipeline/57_front.py --dry-run                            # what it would do
+
+``--space aug`` (2026-11-12): the front again with policy augmentation (``families.frontaug_space``: RandAugment up
+to magnitude 30, 40 epochs) in results/front-aug-study.db, on configs/compute.toml [stages.front_aug] (the local GPU).
+It starts from an eqaug study's completed trials (``--seed-from``: same epochs, same two-seed one-view score; their
+MACs computed from the configuration), then that study's best made narrower (3/4 and 1/2 of its widths), then TPE.
+The 2026-11-05 points (100 epochs, no policy augmentation) do not enter it: their values are on another scale.
+
+    python pipeline/57_front.py --space aug --seed-from ~/.cache/runq/jobs/cifar/tune_on_vm/00003-on_vm/study.db --trials 40
 """
 
 import argparse
@@ -23,12 +31,16 @@ import time
 from pathlib import Path
 
 import optuna
-from common import RESULTS, dataset_file, executor, record, stage_targets, targets_arg
+from common import RESULTS, dataset_file, executor, read_study, record, stage_targets, targets_arg
 from runq.search.hpo import optuna_optimize
 
 from cifarq import families
 
-STUDY = 'eqairbench-front'
+# per --space: the study's name, its default database, its stage (configs/compute.toml) and its space
+SPACES = {
+    'plain': ('eqairbench-front', 'front-study.db', 'front', families.front_space),
+    'aug': ('eqaug-front', 'front-aug-study.db', 'front_aug', families.frontaug_space),
+}
 
 
 def teacher(targets: dict) -> Path:
@@ -57,24 +69,53 @@ def teacher(targets: dict) -> Path:
     return out
 
 
-def study_for(storage: str, seed: int, resume: bool) -> optuna.Study:
+def _snap(point: dict, scale: float) -> dict:
+    """``point`` with its widths scaled (snapped to the space's steps of 8, not under the front's narrowest)."""
+    snap = lambda w, lo: max(lo, int(round(w * scale / 8)) * 8)
+    lo = families.FRONT_LOWS
+    return {**point, 'w1': snap(point['w1'], lo[0]), 'w2': snap(point['w2'], lo[1]), 'w3': snap(point['w3'], lo[2])}
+
+
+def _known(space: str, seed_from: Path | None) -> list[dict]:
+    """Completed trials the study starts from, each {params, values, source}: the 2026-11-05 runs for ``plain``; an
+    eqaug study's completed trials for ``aug``, their MACs from the configuration."""
+    if space == 'plain':
+        return [{'params': s['params'], 'values': s['values'], 'source': s['source'], 'seeds': s['seeds']} for s in families.front_seeds(RESULTS)]
+    if seed_from is None:
+        return []
+    old, tmp = read_study(seed_from)
+    try:
+        done = [t for t in old.trials if t.state.name == 'COMPLETE']
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    hp = lambda t: families.frontaug_space(optuna.trial.FixedTrial(t.params), kd='teacher')
+    return [{'params': t.params, 'values': [t.value, families.macs_of(hp(t))], 'source': f'{seed_from.parent.name} trial {t.number}'} for t in done]
+
+
+def study_for(storage: str, seed: int, resume: bool, space: str = 'plain', seed_from: Path | None = None) -> optuna.Study:
+    name, _, _, space_fn = SPACES[space]
     sampler = optuna.samplers.TPESampler(multivariate=True, constant_liar=True, seed=seed, n_startup_trials=4)
     if resume:
-        return optuna.load_study(study_name=STUDY, storage=storage, sampler=sampler)
-    study = optuna.create_study(study_name=STUDY, storage=storage, directions=['maximize', 'minimize'], sampler=sampler)
+        return optuna.load_study(study_name=name, storage=storage, sampler=sampler)
+    study = optuna.create_study(study_name=name, storage=storage, directions=['maximize', 'minimize'], sampler=sampler)
     probe = optuna.create_study(directions=['maximize', 'minimize']).ask()  # the space's distributions
-    families.front_space(probe, kd='teacher')
-    for s in families.front_seeds(RESULTS):
-        dist = {k: probe.distributions[k] for k in s['params']}
-        study.add_trial(
-            optuna.trial.create_trial(
-                params=s['params'], distributions=dist, values=s['values'], user_attrs={'source': s['source'], 'seeds': s['seeds']}
-            )
-        )
-    fin = next(s for s in families.front_seeds(RESULTS) if s['source'].endswith('FIN'))['params']
-    snap = lambda w, lo: max(lo, int(round(w / 8)) * 8)
-    for scale in (0.75, 0.5):  # the cheap end, unmeasured: the finalist made narrower
-        study.enqueue_trial({**fin, 'w1': snap(fin['w1'] * scale, 48), 'w2': snap(fin['w2'] * scale, 48), 'w3': snap(fin['w3'] * scale, 64)})
+    space_fn(probe, kd='teacher')
+    known = _known(space, seed_from)
+    for s in known:
+        fixed = optuna.trial.FixedTrial(s['params'])
+        space_fn(fixed, kd='teacher')  # (the distributions this point's branch of the space asks for)
+        dist = {k: fixed.distributions[k] for k in s['params']}
+        attrs = {'source': s['source'], **({'seeds': s['seeds']} if 'seeds' in s else {})}
+        study.add_trial(optuna.trial.create_trial(params=s['params'], distributions=dist, values=s['values'], user_attrs=attrs))
+    start = (
+        next(s for s in known if s['source'].endswith('FIN'))['params']
+        if space == 'plain'
+        else max(known, key=lambda s: s['values'][0])['params']
+        if known
+        else families.WARM['eqaug'][0]
+    )
+    for scale in (0.75, 0.5):  # the cheap end, unmeasured: the best known made narrower
+        study.enqueue_trial(_snap(start, scale))
     return study
 
 
@@ -85,17 +126,21 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--trials', type=int, default=16)
     targets_arg(ap)
-    ap.add_argument('--storage', type=Path, default=RESULTS / 'front-study.db')
+    ap.add_argument('--space', choices=sorted(SPACES), default='plain', help='plain: the 2026-11-05 front; aug: with policy augmentation')
+    ap.add_argument('--storage', type=Path, default=None, help="the study database (default: the space's, under results/)")
+    ap.add_argument('--seed-from', type=Path, help='--space aug: an eqaug study database whose completed trials start it')
     ap.add_argument('--resume', action='store_true')
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--minutes', type=float, default=None, help='no new trial after this long')
     ap.add_argument('--teacher-only', action='store_true')
     ap.add_argument('--dry-run', action='store_true')
     a = ap.parse_args()
-    targets = stage_targets('front', a.targets)
-    storage = f'sqlite:///{a.storage.resolve()}'
+    name, db_name, stage, space_fn = SPACES[a.space]
+    targets = stage_targets(stage, a.targets)
+    storage = f'sqlite:///{(a.storage or RESULTS / db_name).resolve()}'
+    seed_from = a.seed_from.expanduser() if a.seed_from else None
     if a.dry_run:
-        seeds = families.front_seeds(RESULTS)
+        seeds = _known(a.space, seed_from)
         print(
             json.dumps(
                 {
@@ -113,14 +158,14 @@ if __name__ == '__main__':
     kd = teacher(targets)
     if a.teacher_only:
         raise SystemExit(0)
-    study = study_for(storage, a.seed, a.resume)
-    print(f'{STUDY}: {len(study.trials)} trials so far; new ones on {targets}', flush=True)
+    study = study_for(storage, a.seed, a.resume, a.space, seed_from)
+    print(f'{name}: {len(study.trials)} trials so far; new ones on {targets}', flush=True)
     t0 = time.time()
-    with executor('front', targets, data=[dataset_file(), kd]) as ex:
+    with executor(stage, targets, data=[dataset_file(), kd]) as ex:
         optuna_optimize(
             study,
             families.TRAIN_FRONT,
-            lambda t: families.front_space(t, kd=str(kd)),
+            lambda t: space_fn(t, kd=str(kd)),
             n_trials=a.trials,
             executor=ex,
             objective=['val_acc_notta', 'macs'],
@@ -130,7 +175,7 @@ if __name__ == '__main__':
         )
     front = sorted(study.best_trials, key=lambda t: t.values[1])
     out = {
-        'study': STUDY,
+        'study': name,
         'storage': storage,
         'trials': len(study.trials),
         'search_seconds': round(time.time() - t0, 1),
@@ -148,4 +193,4 @@ if __name__ == '__main__':
     }
     for f in out['front']:
         print(f'  {f["macs"] / 1e6:6.0f} M MACs  {f["val_1view"]:.4f}  trial {f["trial"]} ({f["source"]}, {f["device"]})')
-    print('saved', record('front', out))
+    print('saved', record('front' if a.space == 'plain' else 'front-aug', out))

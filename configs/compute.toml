@@ -59,6 +59,12 @@ gpu_mb = 20000
 host_mb = 16000
 minutes = 30
 
+[stages.front_aug]                        # the front with policy augmentation (57_front.py --space aug): two-seed trials, 40 epochs
+targets = { local = 1 }
+gpu_mb = 7000
+host_mb = 12000
+minutes = 45
+
 [stages.front]                            # the accuracy/MACs front (pipeline/57_front.py): two-seed trials, 100 epochs
 targets = { "colab:cifar-g4" = 1, "colab:front-rp" = 1, "colab:front-l4" = 1 }
 gpu_mb = 20000

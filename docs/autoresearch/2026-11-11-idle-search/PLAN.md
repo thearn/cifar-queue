@@ -35,6 +35,13 @@ value as the scoreboard's baseline (`val_1view`) and each new best as it comes; 
 2. Idle-time studies.
 3. A candidate above the tolerance retrained over 5 seeds at 40 and 100 epochs before it counts.
 
+## Prepared: the accuracy / MACs front with policy augmentation (M4)
+
+`pipeline/57_front.py --space aug --seed-from <the 24 h study's study.db> --trials N` on the local GPU after the 24 h
+study: two objectives (two-seed one-view validation up, MACs a view down), `families.frontaug_space` (the front's
+widths down to 48/48/64, RandAugment magnitude up to 30, 40 epochs), starting from the 24 h study's completed trials
+as known points (70 at 08:30; their front ran 197-367 M MACs) and its best made narrower (3/4 and 1/2 widths).
+
 ## Next lever (not built)
 
 Augmentation easing: the last epochs trained on clean images (needs a schedule in `airbench.train`).
