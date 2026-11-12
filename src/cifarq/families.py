@@ -258,7 +258,9 @@ def refuse_over_cap(trial: optuna.Trial, p: dict) -> dict:
     stored = param_counts(build({**DEFAULTS, **p}, abstract=True)[0])['stored']
     trial.set_user_attr('params', stored)
     if stored > p['param_cap']:
-        raise optuna.TrialPruned(f'{stored} parameters, over the cap of {p["param_cap"]}')
+        refused = optuna.TrialPruned(f'{stored} parameters, over the cap of {p["param_cap"]}')
+        refused.point = p  # (the point refused: seeding a study compares its fixed values, common.known_point)
+        raise refused
     return p
 
 

@@ -24,8 +24,9 @@ Confirmation on seeds 2-6 (never seen by either search), one view, `results/auto
 
 What this says:
 
-- The three eqaug2 points agree on a +0.16-0.20 pp gain over the control, below the contract's 0.3 pp tolerance:
-  by the contract the second study found no new best (one of the stop rule's three). It is consistent, not proven.
+- The three eqaug2 points agree on a +0.16-0.20 pp gain over the control, below the contract's 0.3 pp tolerance.
+  **Counted as the new best by the user's decision (2026-11-12)**, so the next study starts from it instead of
+  confirming it again: the three agree in sign at both 40 and 100 epochs, and the tolerance came from 3-seed means.
 - Batch 256 is not better than 512: 104 and 76 tie (+0.02 pp) and 256 trains 10 % slower. The common factor of the
   three winners is the stronger distillation (0.39-0.45 against 0.33) and slightly stronger RandAugment (15-16).
 - The lead holds at 100 epochs (H2), and 100 epochs adds 0.35 pp to both: 96.20 % one-view validation, five seeds,
@@ -37,10 +38,13 @@ What this says:
 
 ## For the next session
 
-- Resume with `eqaug3` (RandAugment and cutout 8 fixed, batch 128/256/512, other ranges unchanged), seeded from the
-  git-kept export of the eqaug2 study, warm from 104, 76, 88:
+- Resume with `eqaug3` (RandAugment and cutout 8 fixed, batch 128/256/512, other ranges unchanged), warm from 104,
+  76, 88 and seeded from both studies' git-kept exports. The exports hold pruned trials too (early-stopped with their
+  curves, over-cap with none), so TPE knows the losing regions: 136 known points fit eqaug3 (57 complete, 79 pruned,
+  repeats skipped), against 43 completes when eqaug2 was seeded.
   `python pipeline/55_tune_on_vm.py --target local --family eqaug3 --seeds 2 --kd results/models/ab96-45k-s0
-  --concurrent 1 --pruner rungs --minutes 1440 --seed-from docs/autoresearch/2026-11-11-idle-search/eqaug2-trials.jsonl`
+  --concurrent 1 --pruner rungs --minutes 1440 --seed-from docs/autoresearch/2026-11-11-idle-search/eqaug2-trials.jsonl
+  docs/autoresearch/2026-11-11-idle-search/eqaug-trials.jsonl`
 - Expect small returns: two studies plateaued at 95.8-95.9 % two-seed at 40 epochs. Larger levers are 100 epochs
   (+0.35 pp, 2.5x cost), the M4 front, or augmentation easing (not built).
 - The confirmed point is `candidates.jsonl` id `confirm100-t104-20261112` (train arguments, 100 epochs).

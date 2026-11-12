@@ -23,7 +23,7 @@
    "blocked_by": [
     "M2b"
    ],
-   "note": "seeds 2-6, 1 view: eqaug2 104 95.85 % at 40 ep (+0.20 pp over control, under the 0.3 tolerance), 96.20 +- 0.17 % at 100 ep (+0.20, p 0.07); batch 256 = 512"
+   "note": "seeds 2-6, 1 view: eqaug2 104 95.85 % at 40 ep, 96.20 +- 0.17 % at 100 ep (+0.20 pp over control both); counted as the new best by the user's decision"
   },
   {
    "id": "M1b",
@@ -49,7 +49,7 @@
  "goals": [
   "Use idle local GPU time to find a better one-view CIFAR-10 model under 2 M parameters than the flip-equivariant airbench finalists"
  ],
- "updated": "2026-11-12T15:02:32",
+ "updated": "2026-11-12T15:16:22",
  "kind": "model",
  "scoreboard": [
   {

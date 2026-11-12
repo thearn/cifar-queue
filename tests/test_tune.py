@@ -3,6 +3,7 @@ every optional feature can be sampled off, the queue options grow with the trial
 schedule-free training still maps to train's arguments, and a short search runs end to end in this process."""
 
 import optuna
+import pytest
 
 from cifarq import train, tune
 
@@ -153,3 +154,29 @@ def test_the_third_space_settles_augmentation_and_reads_an_exported_study(tmp_pa
     out.write_text(''.join(json.dumps(r) + '\n' for r in rows([t])))
     back = completed_trials(out)
     assert [(b.number, b.value, b.params, b.user_attrs) for b in back] == [(7, 0.95, t.params, {'device': 'x'})]
+    stopped = optuna.trial.create_trial(
+        state=optuna.trial.TrialState.PRUNED, params=t.params, distributions=fixed.distributions, intermediate_values={4: 0.8}
+    )
+    stopped.number = 8
+    out.write_text(''.join(json.dumps(r) + '\n' for r in rows([t, stopped])))
+    assert [b.number for b in completed_trials(out)] == [7]
+    back = completed_trials(out, pruned=True)
+    assert [(b.number, b.state.name, b.intermediate_values) for b in back] == [(7, 'COMPLETE', {}), (8, 'PRUNED', {4: 0.8})]
+
+
+def test_over_the_cap_points_still_fit_and_seed_as_pruned(tmp_path):
+    import functools
+    import sys
+    from pathlib import Path
+
+    from cifarq import families
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'pipeline'))
+    from common import known_point
+
+    space = functools.partial(families.eqaug3_space, kd='teacher')
+    wide = {**families.WARM['eqaug3'][0], 'w1': 200, 'w2': 192, 'w3': 224}
+    with pytest.raises(optuna.TrialPruned):
+        space(optuna.trial.FixedTrial(wide))
+    assert tune.misfit(wide, space) == []
+    assert known_point({**wide, 'augment': 'randaugment'}, space) == wide

@@ -1,0 +1,1 @@
+{"when": "2026-11-12T15:16:22", "session": "cifar", "id": "D1", "kind": "decision", "result": "eqaug2 104: 95.85 % at 40 ep, 96.20 % at 100 ep over seeds 2-6 (control 95.65 / 96.00)", "decision": "Counted as the new best though +0.20 pp is under the 0.3 pp tolerance (user, 2026-11-12); next study seeds from both exports incl. pruned trials"}

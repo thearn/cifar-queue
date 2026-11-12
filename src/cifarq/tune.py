@@ -115,7 +115,10 @@ def misfit(params: dict, space_fn=None) -> list[str]:
             return value
 
     probe = Probe(params)
-    (space_fn or space)(probe)
+    try:
+        (space_fn or space)(probe)
+    except optuna.TrialPruned:  # (over a parameter cap: still a point of the space, every parameter asked)
+        pass
     return problems + [f'{k}: not in the space' for k in params if k not in probe.params]
 
 

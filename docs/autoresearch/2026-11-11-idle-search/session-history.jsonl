@@ -39,3 +39,4 @@
 {"when": "2026-11-12T15:02:32", "by": "cifar", "kind": "milestone", "id": "M3", "title": "A new best confirmed over seeds", "from": "planned", "to": "done"}
 {"when": "2026-11-12T15:02:32", "by": "cifar", "kind": "now", "text": "Tuning stopped at the user's request. Confirmation over 5 fresh seeds: eqaug2 trial 104 scores 95.85 % at 40 epochs and 96.20 % at 100 (control 95.65 / 96.00), a consistent +0.2 pp but under the contract's 0.3 pp tolerance. Test opened by mistake in the confirmation runs (logged)."}
 {"when": "2026-11-12T15:02:32", "by": "cifar", "kind": "next", "text": "Next idle session: eqaug3 seeded from eqaug2-trials.jsonl (STATUS.md has the command), or the M4 front"}
+{"when": "2026-11-12T15:16:22", "by": "cifar", "kind": "milestone-note", "id": "M3", "note": "seeds 2-6, 1 view: eqaug2 104 95.85 % at 40 ep, 96.20 +- 0.17 % at 100 ep (+0.20 pp over control both); counted as the new best by the user's decision"}

@@ -255,51 +255,76 @@ def session_board(board: str, trials: list, metric: str, family: str, job=None) 
         print(f'(leaderboard not updated: {e})', flush=True)
 
 
-def completed_trials(source: Path) -> list:
-    """The completed trials of a study: its SQLite database, or its ``export_trials.py`` export (``.jsonl``, a row a
-    trial with its distributions, which git keeps where ``results/`` is not kept), as Optuna's frozen trials."""
+def completed_trials(source: Path, pruned: bool = False) -> list:
+    """The completed trials of a study (and with ``pruned`` its pruned ones: stopped early, with their curves, or over
+    the parameter cap, with none): its SQLite database, or its ``export_trials.py`` export (``.jsonl``, a row a trial
+    with its distributions, which git keeps where ``results/`` is not kept), as Optuna's frozen trials."""
     import optuna
 
+    states = ('COMPLETE', 'PRUNED') if pruned else ('COMPLETE',)
     if source.suffix == '.jsonl':
         out = []
         for line in source.read_text().splitlines():
             row = json.loads(line)
+            if row.get('state', 'COMPLETE') not in states:
+                continue
             dists = {k: optuna.distributions.json_to_distribution(v) for k, v in row['distributions'].items()}
-            t = optuna.trial.create_trial(params=row['params'], distributions=dists, value=row['value'], user_attrs=row.get('user_attrs', {}))
+            t = optuna.trial.create_trial(
+                state=optuna.trial.TrialState[row.get('state', 'COMPLETE')],
+                params=row['params'],
+                distributions=dists,
+                value=row['value'],
+                intermediate_values={int(k): v for k, v in row.get('intermediate', {}).items()},
+                user_attrs=row.get('user_attrs', {}),
+            )
             t.number = row['number']
             out.append(t)
         return out
     old, tmp = read_study(source)
     try:
-        return [t for t in old.trials if t.state.name == 'COMPLETE' and t.value is not None]
+        return [t for t in old.trials if t.state.name in states and (t.value is not None or t.state.name == 'PRUNED')]
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def seeded_study(src_db: Path, space_fn, out: Path, study_name: str = 'cifar-on-vm') -> tuple[int, int, float | None]:
-    """A new study database ``out`` (named ``study_name``, as ``tune.on_vm`` opens it) holding the completed trials of
-    the study in ``src_db`` (a database or an export: ``completed_trials``) that fit ``space_fn`` (``known_point``), as
-    known points with their values: a search over reworked ranges continues from what the old one measured instead of
-    from a few starting points. (kept, offered, the best kept value)."""
+def seeded_study(sources: list[Path], space_fn, out: Path, study_name: str = 'cifar-on-vm') -> tuple[int, int, float | None]:
+    """A new study database ``out`` (named ``study_name``, as ``tune.on_vm`` opens it) holding the completed and pruned
+    trials of the studies in ``sources`` (databases or exports: ``completed_trials``) that fit ``space_fn``
+    (``known_point``), as known points with their values or curves: a search over reworked ranges continues from what
+    the old one measured, its losers included, instead of from a few starting points. (kept, offered, the best kept
+    value; pruned trials counted in kept and offered.) A point already kept from an earlier source is skipped: a
+    study seeded from another holds copies of its trials."""
     import optuna
 
-    done = completed_trials(src_db)
+    done = [(src, t) for src in sources for t in completed_trials(src, pruned=True)]
     out.parent.mkdir(parents=True, exist_ok=True)
     new = optuna.create_study(study_name=study_name, storage=f'sqlite:///{out}', direction='maximize')
-    kept, best = 0, None
-    for t in done:
+    kept, best, seen = 0, None, set()
+    for src, t in done:
         params = known_point(t.params, space_fn)
-        if params is None:
+        key = json.dumps(params, sort_keys=True)
+        if params is None or key in seen:
             continue
+        seen.add(key)
         fixed = optuna.trial.FixedTrial(params)
-        space_fn(fixed)
+        try:
+            space_fn(fixed)
+        except optuna.TrialPruned:  # (over the cap: its distributions are all asked by then)
+            pass
         attrs = {k: v for k, v in t.user_attrs.items() if isinstance(v, (int, float, str, bool))}
         new.add_trial(
             optuna.trial.create_trial(
-                params=params, distributions=fixed.distributions, value=t.value, user_attrs={**attrs, 'source': f'{src_db.name} trial {t.number}'}
+                state=t.state,
+                params=params,
+                distributions=fixed.distributions,
+                value=t.value if t.state.name == 'COMPLETE' else None,
+                intermediate_values=dict(t.intermediate_values),
+                user_attrs={**attrs, 'source': f'{src.name} trial {t.number}'},
             )
         )
-        kept, best = kept + 1, t.value if best is None else max(best, t.value)
+        kept += 1
+        if t.state.name == 'COMPLETE':
+            best = t.value if best is None else max(best, t.value)
     return kept, len(done), best
 
 
@@ -316,5 +341,8 @@ def known_point(params: dict, space_fn) -> dict | None:
     if len(gone) < len(problems):
         return None
     kept = {k: v for k, v in params.items() if k not in gone}
-    out = space_fn(optuna.trial.FixedTrial(kept))
+    try:
+        out = space_fn(optuna.trial.FixedTrial(kept))
+    except optuna.TrialPruned as refused:  # (over the cap: the point as the space built it)
+        out = refused.point
     return kept if all(out.get(k, object()) == params[k] for k in gone) else None
