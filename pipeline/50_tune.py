@@ -25,7 +25,19 @@ import time
 from pathlib import Path
 
 import optuna
-from common import RESULTS, ROOT, dataset_file, executor, record, session_score, stage_targets, start_from_arg, start_point, targets_arg
+from common import (
+    RESULTS,
+    ROOT,
+    dataset_file,
+    executor,
+    record,
+    session_board,
+    session_score,
+    stage_targets,
+    start_from_arg,
+    start_point,
+    targets_arg,
+)
 from runq.search.hpo import make_pruner, optuna_optimize
 
 from cifarq import tune
@@ -76,13 +88,14 @@ if __name__ == '__main__':
     shown = {'best': None, 'baseline': None}
 
     def log(line: str) -> None:
-        """The search's line per trial; Page's recipe's value and each new best to the session's scoreboard."""
+        """The search's line per trial; Page's recipe's value, each new best and the standing to the session."""
         print(line, flush=True)
         done = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
         page = next((t.value for t in done if t.system_attrs.get('fixed_params') == tune.REFERENCE), None)
         if page is not None and shown['baseline'] is None:
             shown['baseline'] = page
             session_score('val_acc', baseline=page, baseline_label="Page's recipe")
+        session_board(study.study_name, study.trials, 'val_acc', 'b0')
         if done and study.best_value != shown['best']:
             shown['best'], b = study.best_value, study.best_trial
             session_score('val_acc', best=b.value, job=Path(b.user_attrs.get('job', '')).name or None)

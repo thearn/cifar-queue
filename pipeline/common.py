@@ -214,3 +214,41 @@ def session_score(metric: str, **fields) -> None:
         sessions.score(metric, **fields)
     except (sessions.SessionError, OSError, ValueError) as e:
         print(f'(scoreboard not updated: {e})', flush=True)
+
+
+# the leaderboard's columns: what tells this family's configurations apart at a glance
+BOARD_COLUMNS = {
+    'b0': ['width', 'epochs', 'optimizer', 'batch_size', 'activation', 'head'],
+    'eqaug': ['w1', 'w2', 'w3', 'batch_size', 'lr', 'augment', 'kd_weight'],
+}
+
+
+def read_study(db: Path):
+    """The newest study in ``db`` (a SQLite file another process may be writing), read from a consistent copy: the
+    study and the copy's directory (the caller removes it)."""
+    import sqlite3
+    import tempfile
+
+    import optuna
+
+    tmp = Path(tempfile.mkdtemp()) / 'study.db'
+    src, dst = sqlite3.connect(f'file:{db}?mode=ro', uri=True), sqlite3.connect(tmp)
+    src.backup(dst)
+    src.close()
+    dst.close()
+    storage = f'sqlite:///{tmp}'
+    return optuna.load_study(study_name=optuna.study.get_all_study_names(storage)[-1], storage=storage), tmp.parent
+
+
+def session_board(board: str, trials: list, metric: str, family: str, job=None) -> None:
+    """The runq session's leaderboard ``board`` (the app's table of the best trials and the trial counts), when the
+    session is registered; a record, never a reason to stop a search."""
+    from runq.campaigns import sessions
+
+    from cifarq import tune
+
+    rows, counts = tune.standing(trials)
+    try:
+        sessions.leaderboard(board, rows, metric=metric, counts=counts, columns=BOARD_COLUMNS.get(family, []), job=job)
+    except (sessions.SessionError, OSError, ValueError) as e:
+        print(f'(leaderboard not updated: {e})', flush=True)

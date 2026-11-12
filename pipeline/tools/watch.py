@@ -15,8 +15,7 @@ import argparse
 import collections
 import os
 import shutil
-import sqlite3
-import tempfile
+import sys
 import time
 import tomllib
 from pathlib import Path
@@ -25,6 +24,7 @@ import optuna
 from runq.queue.collect import job_dir  # (queue jobs' directories since 2026-11-11)
 
 RESULTS = Path(__file__).resolve().parents[2] / 'results'
+sys.path.insert(0, str(RESULTS.parent / 'pipeline'))  # (common: the stages' helpers)
 # (job_dir names the session's folder: the project's own, as the stages set it, not the shell's)
 os.environ.setdefault('RUNQ_SESSION', tomllib.loads((RESULTS.parent / 'configs' / 'compute.toml').read_text())['session'])
 KEYS = ('width', 'epochs', 'optimizer', 'sgd_lr', 'adamw_lr', 'batch_size', 'activation', 'mix', 'ema')
@@ -38,25 +38,14 @@ def newest_mode2_db() -> Path | None:
     return dbs[-1] if dbs else None
 
 
-def load(db: Path):
-    """The newest study in ``db``, read from a copy (a file brought back mid-write is copied, not opened in place)."""
-    tmp = Path(tempfile.mkdtemp()) / 'study.db'
-    src = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
-    dst = sqlite3.connect(tmp)
-    src.backup(dst)
-    src.close()
-    dst.close()
-    storage = f'sqlite:///{tmp}'
-    name = optuna.study.get_all_study_names(storage)[-1]
-    return optuna.load_study(study_name=name, storage=storage), tmp
-
-
 def report(db: Path) -> str:
-    study, tmp = load(db)
+    from common import read_study
+
+    study, tmp = read_study(db)
     try:
         trials = study.trials
     finally:
-        shutil.rmtree(tmp.parent, ignore_errors=True)
+        shutil.rmtree(tmp, ignore_errors=True)
     states = collections.Counter(t.state.name for t in trials)
     done = [t for t in trials if t.state.name == 'COMPLETE']
     lines = [f'{study.study_name}  ({db})', f'trials: {dict(states)}']

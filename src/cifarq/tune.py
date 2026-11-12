@@ -119,6 +119,17 @@ def misfit(params: dict, space_fn=None) -> list[str]:
     return problems + [f'{k}: not in the space' for k in params if k not in probe.params]
 
 
+def standing(trials: list, n: int = 5) -> tuple[list[dict], dict[str, int]]:
+    """A study's best ``n`` complete trials (``{"trial", "value", "test", "params"}``, best first) and its trials
+    counted by state (``complete``, ``pruned``, ``failed``, ``running``): the session leaderboard's rows."""
+    import collections
+
+    done = sorted((t for t in trials if t.state.name == 'COMPLETE' and t.value is not None), key=lambda t: -t.value)
+    rows = [{'trial': t.number, 'value': t.value, 'test': t.user_attrs.get('test_acc'), 'params': t.params} for t in done[:n]]
+    counts = collections.Counter({'FAIL': 'failed'}.get(t.state.name, t.state.name.lower()) for t in trials)
+    return rows, dict(counts)
+
+
 def space(trial, schedule_free: bool = True) -> dict:
     s = trial.suggest_float
     c = trial.suggest_categorical

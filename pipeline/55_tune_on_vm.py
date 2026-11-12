@@ -17,7 +17,20 @@ import shutil
 import time
 from pathlib import Path
 
-from common import COMPUTE, RESULTS, dataset_file, executor, job_roots, record, session_score, stage_targets, start_from_arg, start_point
+from common import (
+    COMPUTE,
+    RESULTS,
+    dataset_file,
+    executor,
+    job_roots,
+    read_study,
+    record,
+    session_board,
+    session_score,
+    stage_targets,
+    start_from_arg,
+    start_point,
+)
 
 
 def show_on_scoreboard(doc: dict, scored: dict, family: str) -> dict:
@@ -32,6 +45,21 @@ def show_on_scoreboard(doc: dict, scored: dict, family: str) -> dict:
         session_score(metric, best=doc['best_value'], job=f'trial {doc["best_trial"]}')
         scored['best'] = doc['best_value']
     return scored
+
+
+def show_on_leaderboard(future, family: str) -> None:
+    """The runq session's leaderboard for this search (named for its family and job) from the job's study.db, which a
+    local job writes in place and a VM's brings back every two minutes (``watch``)."""
+    db = future.job / 'study.db'
+    if not db.exists():
+        return
+    study, tmp = read_study(db)
+    try:
+        session_board(
+            f'{family} {future.job.name}', study.trials, 'val_acc' if family == 'b0' else 'val_1view', family, job=getattr(future, 'job_id', None)
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == '__main__':
@@ -206,6 +234,7 @@ if __name__ == '__main__':
                     flush=True,
                 )
                 scored = show_on_scoreboard(doc, scored, a.family)
+                show_on_leaderboard(future, a.family)
         result = future.result()
     result['wall_seconds_from_submit'] = round(time.time() - t0, 1)
     if gpu and not a.concurrent and result.get('calibration') and not result['calibration'][0].get('given'):

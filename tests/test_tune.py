@@ -82,3 +82,17 @@ def test_the_idle_search_starts_from_the_best_known_eqairbench_points():
 
     space = functools.partial(families.eqaug_space, kd='teacher')
     assert [tune.misfit(p, space) for p in families.WARM['eqaug']] == [[], []]
+
+
+def test_the_standing_ranks_complete_trials_and_counts_every_state():
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    study = optuna.create_study(direction='maximize')
+    for v in (0.90, 0.95, 0.93):
+        t = study.ask({'x': optuna.distributions.FloatDistribution(0, 1)})
+        study.tell(t, v)
+    study.tell(study.ask(), state=optuna.trial.TrialState.PRUNED)
+    study.tell(study.ask(), state=optuna.trial.TrialState.FAIL)
+    study.ask()  # running
+    rows, counts = tune.standing(study.trials, n=2)
+    assert [r['value'] for r in rows] == [0.95, 0.93] and set(rows[0]['params']) == {'x'}
+    assert counts == {'complete': 3, 'pruned': 1, 'failed': 1, 'running': 1}
