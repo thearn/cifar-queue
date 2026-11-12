@@ -106,3 +106,21 @@ def test_the_augmented_front_space_holds_every_eqaug_point():
     space = functools.partial(families.frontaug_space, kd='teacher')
     assert [tune.misfit(p, space) for p in families.WARM['eqaug']] == [[], []]
     assert tune.misfit({**families.WARM['eqaug'][0], 'augment': 'randaugment', 'augment_m': 30, 'w1': 48}, space) == []
+
+
+def test_the_second_space_starts_from_the_first_ones_best_and_takes_its_fitting_trials():
+    import functools
+    import sys
+    from pathlib import Path
+
+    from cifarq import families
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'pipeline'))
+    from common import known_point
+
+    space = functools.partial(families.eqaug2_space, kd='teacher')
+    assert [tune.misfit(p, space) for p in families.WARM['eqaug2']] == [[], [], []]
+    best = {**families.WARM['eqaug2'][0], 'srf': True}
+    assert known_point(best, space) == families.WARM['eqaug2'][0]  # (srf: fixed at the same value, dropped)
+    assert known_point({**best, 'srf': False}, space) is None  # fixed at another value
+    assert known_point({**best, 'augment': 'none'}, space) is None  # no longer a choice

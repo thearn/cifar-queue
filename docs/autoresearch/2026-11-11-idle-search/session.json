@@ -9,19 +9,19 @@
   },
   {
    "id": "M2",
-   "state": "active",
+   "state": "done",
    "title": "Idle-time eqaug studies (flip-equivariant airbench, policy augmentation open)",
    "blocked_by": [
     "M1b"
    ],
-   "note": "24 h study started 2026-11-11 21:12 as job 4457; ends about 21:12 on 11-12"
+   "note": "24 h study stopped at 11.5 h (2026-11-12 08:42, job 4457): 71 complete, best trial 113 95.87 % two-seed val; RandAugment at magnitude 13-15 in all 15 best; study kept as results/eqaug-24h-study.db"
   },
   {
    "id": "M3",
    "state": "planned",
    "title": "A new best confirmed over seeds",
    "blocked_by": [
-    "M2"
+    "M2b"
    ]
   },
   {
@@ -33,28 +33,34 @@
   {
    "id": "M4",
    "state": "planned",
-   "title": "Accuracy / MACs front with policy augmentation (prepared, runs after the 24 h study)",
+   "title": "Accuracy / MACs front with policy augmentation (prepared, runs after the second study)",
    "blocked_by": [
-    "M2"
+    "M2b"
    ]
+  },
+  {
+   "id": "M2b",
+   "state": "active",
+   "title": "Second study over reworked ranges (eqaug2), warm from the first's 43 fitting trials",
+   "note": "job 4458, started 2026-11-12 08:45, 24 h budget; RandAugment magnitude 8-30, batch 256/512, cutout 0-12, wider bn momentum, smoothing, decay, distillation weight and first width"
   }
  ],
  "goals": [
   "Use idle local GPU time to find a better one-view CIFAR-10 model under 2 M parameters than the flip-equivariant airbench finalists"
  ],
- "updated": "2026-11-12T08:29:02",
+ "updated": "2026-11-12T08:49:36",
  "kind": "model",
  "scoreboard": [
   {
    "name": "val_1view",
    "direction": "max",
    "target": {
-    "value": 0.9527,
-    "label": "FIN at 40 epochs, 3 seeds (eqsm M3)"
+    "value": 0.96,
+    "label": "0.96"
    },
    "baseline": {
-    "value": 0.9517,
-    "label": "first starting point"
+    "value": 0.9587,
+    "label": "best known when seeded (24 h study trial 113)"
    },
    "best": {
     "value": 0.9587,
@@ -63,11 +69,12 @@
    }
   }
  ],
- "now": "11 h into the 24 h eqaug study (job 4457): 68 complete, 72 pruned. Best trial 113 at 95.87 % one-view val (two seeds 96.04/95.70), +0.70 pp over FIN in the same study (95.17). All 15 best trials use RandAugment at magnitude 13-15 (the range tops at 15) with distillation weight about 0.3; no augmentation peaks at 95.29 %. Unconfirmed: a search's best runs 0.2-0.5 pp optimistic.",
- "next": "At the end (about 21:12): retrain the best 2-3 over 5 seeds at 40 and 100 epochs; next study widens augment_m past 15",
+ "now": "Second idle study running (job 4458, eqaug2 space, started 2026-11-12 08:45, 24 h budget): the first study's 43 trials that fit the reworked ranges are known points, so TPE starts from its model of them. Best known 95.87 % (first study's trial 113); target 0.96 two-seed one-view val at 40 epochs.",
+ "next": "Watch whether RandAugment above magnitude 15, batch 256 or less cutout beat 95.87; then the 5-seed retrain at 40 and 100 epochs",
  "glossary": {
   "eqaug": "the idle search's space: flip-equivariant airbench, 40 epochs, two seeds, policy augmentation open (families.eqaug_space)",
-  "FIN": "the flip-equivariant airbench finalist: 128/112/144, 1.94 M parameters"
+  "FIN": "the flip-equivariant airbench finalist: 128/112/144, 1.94 M parameters",
+  "eqaug2": "the second idle search space (families.eqaug2_space): eqaug with SRF fixed on, policy augmentation always on, and the edges the first study hit widened"
  },
  "leaderboards": [
   {
@@ -212,7 +219,7 @@
     }
    ],
    "counts": {
-    "complete": 70,
+    "complete": 71,
     "pruned": 78,
     "running": 2
    },

@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -252,3 +253,51 @@ def session_board(board: str, trials: list, metric: str, family: str, job=None) 
         sessions.leaderboard(board, rows, metric=metric, counts=counts, columns=BOARD_COLUMNS.get(family, []), job=job)
     except (sessions.SessionError, OSError, ValueError) as e:
         print(f'(leaderboard not updated: {e})', flush=True)
+
+
+def seeded_study(src_db: Path, space_fn, out: Path, study_name: str = 'cifar-on-vm') -> tuple[int, int, float | None]:
+    """A new study database ``out`` (named ``study_name``, as ``tune.on_vm`` opens it) holding the completed trials of
+    the study in ``src_db`` that fit ``space_fn`` (``known_point``), as known points with their values: a search over
+    reworked ranges continues from what the old one measured instead of from a few starting points. (kept, offered,
+    the best kept value)."""
+    import optuna
+
+    old, tmp = read_study(src_db)
+    try:
+        done = [t for t in old.trials if t.state.name == 'COMPLETE' and t.value is not None]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    new = optuna.create_study(study_name=study_name, storage=f'sqlite:///{out}', direction='maximize')
+    kept, best = 0, None
+    for t in done:
+        params = known_point(t.params, space_fn)
+        if params is None:
+            continue
+        fixed = optuna.trial.FixedTrial(params)
+        space_fn(fixed)
+        attrs = {k: v for k, v in t.user_attrs.items() if isinstance(v, (int, float, str, bool))}
+        new.add_trial(
+            optuna.trial.create_trial(
+                params=params, distributions=fixed.distributions, value=t.value, user_attrs={**attrs, 'source': f'{src_db.name} trial {t.number}'}
+            )
+        )
+        kept, best = kept + 1, t.value if best is None else max(best, t.value)
+    return kept, len(done), best
+
+
+def known_point(params: dict, space_fn) -> dict | None:
+    """``params`` as a point of ``space_fn``, or None when it is not one: a parameter the space no longer asks for is
+    dropped when the space fixes it at the same value (``srf`` True in ``eqaug2``), and refuses the point otherwise;
+    any other misfit (a value outside a range or a choice) refuses it."""
+    import optuna
+
+    from cifarq import tune
+
+    problems = tune.misfit(params, space_fn)
+    gone = [p.split(':')[0] for p in problems if p.endswith(': not in the space')]
+    if len(gone) < len(problems):
+        return None
+    kept = {k: v for k, v in params.items() if k not in gone}
+    out = space_fn(optuna.trial.FixedTrial(kept))
+    return kept if all(out.get(k, object()) == params[k] for k in gone) else None

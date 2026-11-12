@@ -187,6 +187,47 @@ def eqaug_space(
     return refuse_over_cap(trial, p)
 
 
+def eqaug2_space(trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
+    """The second idle-time space (2026-11-12), from the 24 h eqaug study's best 20 of 71 complete trials. Fixed where
+    they all agreed: structured receptive fields on (20 of 20), policy augmentation on (no augmentation peaked at
+    95.29 % against 95.87 %). Widened where they sat at an edge: RandAugment's magnitude (11-15 of 2-15: now 8-30),
+    batch (all 512, the smaller choice: now 256 or 512), cutout (8, the smallest: now 0-12), batch-norm momentum
+    (0.036-0.046 of 0.035-0.12), label smoothing (0.11-0.16 of 0.1-0.3), weight decay (0.0051-0.0073 of 0.004-0.015),
+    distillation weight (0.25-0.38 of 0-0.4), the first width (168 every time: now 128-200). Still 40 epochs and two
+    seeds, so the old study's trials enter this one as known points (``55_tune_on_vm.py --seed-from``)."""
+    c, s = trial.suggest_categorical, trial.suggest_float
+    p = {
+        'arch': 'airbench',
+        'depth': 3,
+        'flip_eq': 2,
+        'srf': True,
+        'widths': (c('w1', list(range(128, 208, 8))), c('w2', list(range(96, 200, 8))), c('w3', list(range(96, 232, 8)))),
+        'epochs': float(max_epochs),
+        'batch_size': c('batch_size', [256, 512]),
+        'lr': s('lr', 5.0, 14.0, log=True),
+        'momentum': s('momentum', 0.65, 0.9),
+        'weight_decay': s('weight_decay', 0.002, 0.012, log=True),
+        'bias_scaler': s('bias_scaler', 32.0, 128.0, log=True),
+        'label_smoothing': s('label_smoothing', 0.03, 0.25),
+        'warmup_frac': s('warmup_frac', 0.05, 0.25),
+        'final_lr_frac': s('final_lr_frac', 0.0, 0.05),
+        'bn_momentum': s('bn_momentum', 0.015, 0.08, log=True),
+        'translate': c('translate', [2, 3, 4]),
+        'cutout': c('cutout', [0, 4, 8, 12]),
+        'whiten_bias_epochs': 3,
+        'scaling_factor': s('scaling_factor', 1 / 30, 1 / 10, log=True),
+        'tta_level': 0,
+        'lookahead': True,
+        'param_cap': cap,
+        'augment': c('augment', ['ta_wide', 'randaugment']),
+    }
+    if p['augment'] == 'randaugment':
+        p['augment_m'] = trial.suggest_int('augment_m', 8, 30)
+    if kd:
+        p.update(kd_teacher=kd, kd_weight=s('kd_weight', 0.1, 0.6), kd_temp=s('kd_temp', 2.0, 8.0, log=True))
+    return refuse_over_cap(trial, p)
+
+
 def frontaug_space(trial: optuna.Trial, kd: str = '', max_epochs: float = 40) -> dict:
     """The accuracy / MACs front with policy augmentation (session 2026-11-11-idle-search): ``eqaug_space`` with the
     front's widths (down to half the finalist's) and RandAugment's magnitude up to its maximum, 30 (the 24 h eqaug
@@ -217,6 +258,7 @@ SPACES = {
     'pyramidnet': pyramidnet_space,
     'eqairbench': eqairbench_space,
     'eqaug': eqaug_space,
+    'eqaug2': eqaug2_space,
 }
 
 # airbench94's recipe (1.97 M, widths 64/256/256) as a point of the airbench space, at the cap's epochs
@@ -332,6 +374,73 @@ CALIBRATE = {
     'eqairbench': {'epochs': 2, 'widths': (128, 112, 144), 'depth': 3, 'flip_eq': 2},
 }
 CALIBRATE['eqaug'] = CALIBRATE['eqairbench']
+CALIBRATE['eqaug2'] = CALIBRATE['eqairbench']
+# the 24 h eqaug study's best three (trials 113, 138, 110: 95.87, 95.85, 95.82 % two-seed one-view validation)
+WARM['eqaug2'] = [
+    {
+        'w1': 168,
+        'w2': 144,
+        'w3': 136,
+        'batch_size': 512,
+        'lr': 7.948391,
+        'momentum': 0.751016,
+        'weight_decay': 0.005766,
+        'bias_scaler': 83.705962,
+        'label_smoothing': 0.117153,
+        'warmup_frac': 0.138032,
+        'final_lr_frac': 0.015405,
+        'bn_momentum': 0.038491,
+        'translate': 3,
+        'cutout': 8,
+        'scaling_factor': 0.056672,
+        'augment': 'randaugment',
+        'augment_m': 14,
+        'kd_weight': 0.32936,
+        'kd_temp': 4.445451,
+    },
+    {
+        'w1': 168,
+        'w2': 144,
+        'w3': 144,
+        'batch_size': 512,
+        'lr': 9.655756,
+        'momentum': 0.79209,
+        'weight_decay': 0.005629,
+        'bias_scaler': 74.615566,
+        'label_smoothing': 0.112945,
+        'warmup_frac': 0.160504,
+        'final_lr_frac': 0.019025,
+        'bn_momentum': 0.038864,
+        'translate': 3,
+        'cutout': 8,
+        'scaling_factor': 0.066814,
+        'augment': 'randaugment',
+        'augment_m': 14,
+        'kd_weight': 0.284347,
+        'kd_temp': 3.714792,
+    },
+    {
+        'w1': 168,
+        'w2': 144,
+        'w3': 144,
+        'batch_size': 512,
+        'lr': 9.000729,
+        'momentum': 0.73811,
+        'weight_decay': 0.005656,
+        'bias_scaler': 75.854491,
+        'label_smoothing': 0.155869,
+        'warmup_frac': 0.133152,
+        'final_lr_frac': 0.024048,
+        'bn_momentum': 0.037909,
+        'translate': 3,
+        'cutout': 8,
+        'scaling_factor': 0.065738,
+        'augment': 'randaugment',
+        'augment_m': 14,
+        'kd_weight': 0.312074,
+        'kd_temp': 4.592545,
+    },
+]
 
 
 # ---- the accuracy / compute front (2026-11-05): the two-objective study session 2026-10-30 planned (M7) and drew

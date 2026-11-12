@@ -8,6 +8,7 @@ job's directory; progress.json and study.db come back every two minutes while it
     python pipeline/55_tune_on_vm.py --target colab:cifar-g4 --cold --pruner rungs --minutes 45
     python pipeline/55_tune_on_vm.py --target local --concurrent 1 --trials 4 --minutes 5      # the 4060, as a test
     python pipeline/55_tune_on_vm.py --resume                            # the latest run's study, on a new job
+    python pipeline/55_tune_on_vm.py --target local --family eqaug2 --seeds 2 --kd results/models/ab96-45k-s0 --seed-from results/eqaug-24h-study.db
     python pipeline/55_tune_on_vm.py --target colab:cifar-g4 --pruner rungs --minutes 45 --start-from best
 """
 
@@ -25,6 +26,7 @@ from common import (
     job_roots,
     read_study,
     record,
+    seeded_study,
     session_board,
     session_score,
     stage_targets,
@@ -108,6 +110,7 @@ if __name__ == '__main__':
     ap.add_argument('--resume-from', help="a study database to continue (instead of --resume's latest)")
     ap.add_argument('--warm-from', help="an earlier study's database: its best --warm-top trials are the starting points")
     ap.add_argument('--warm-top', type=int, default=4)
+    ap.add_argument('--seed-from', type=Path, help="an earlier study's database: its completed trials that fit this space enter as known points")
     ap.add_argument(
         '--seeds',
         type=int,
@@ -141,8 +144,20 @@ if __name__ == '__main__':
                 print(f'{gpu}: {stored} trainings at once (stored)', flush=True)
     elif a.concurrent is None:
         a.concurrent = 1  # (the 4060: two at once gave 5 % more throughput in total)
-    resume = {}
-    if a.resume_from:
+    resume, seeded_best = {}, None
+    if a.seed_from:
+        if a.resume or a.resume_from or a.warm_from or a.start_from:
+            raise SystemExit('--seed-from starts a new study: not with --resume, --resume-from, --warm-from or --start-from')
+        import functools
+
+        from cifarq import families
+
+        seeded = RESULTS / 'resume' / f'seeded-{a.family}-{time.strftime("%Y%m%d-%H%M%S")}.db'
+        space_fn = functools.partial(families.SPACES[a.family], max_epochs=a.max_epochs, kd=a.kd and 'teacher')
+        kept, total, seeded_best = seeded_study(a.seed_from.expanduser(), space_fn, seeded)
+        print(f'seeded from {a.seed_from}: {kept} of {total} completed trials fit the {a.family} space', flush=True)
+        resume = {'resume_from': str(seeded)}
+    elif a.resume_from:
         frozen = RESULTS / 'resume' / f'{Path(a.resume_from).parent.name}-{time.strftime("%Y%m%d-%H%M%S")}.db'
         frozen.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(a.resume_from, frozen)
@@ -222,6 +237,9 @@ if __name__ == '__main__':
             )
         print(f'job {future.job}', flush=True)
         seen, scored = None, {}
+        if seeded_best is not None:  # (the seeded study's first trials are known points, not starting points)
+            session_score('val_1view' if a.family != 'b0' else 'val_acc', baseline=seeded_best, baseline_label='best known when seeded')
+            scored['baseline'] = seeded_best
         while not future.done():
             time.sleep(20)
             p = future.job / 'progress.json'
