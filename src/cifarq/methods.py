@@ -13,15 +13,16 @@ kernels are HWIO, so a kernel's spatial axes are (0, 1) and an image's (1, 2).
   clipped to [0.25, 4] times the batch mean; ``hard``: the half that disagrees most), so the epoch budget goes where
   the student is still wrong, at no extra forward passes.
 - MT6 ``gated_logits``: one view first; the full test-time augmentation only for images whose top-two probability
-  margin is under ``gate``; the share that needed it, for the average views counted in the footprint.
+  margin is under ``gate``, gathered so the skipped views are never computed; which images needed it, for the average
+  views counted in the footprint. ``masked_logits`` is the same inside one compiled program, for small batches.
 (MT2, trunk-and-tails averaging, and MT5, weight-tied depth, live in ``airbench.train`` and ``airbench.model``.)
 
 Session 2026-10-30-equivariant-small adds ``P4MConv`` and ``GroupMaxPool`` (Q1: the flips and quarter turns, D4) and
 ``MaxBlurPool`` (Q2: anti-aliased downsampling), ``FieldSE`` (O2), structured receptive fields (``use_srf``, Q4) and
 the Muon optimizer for the filters (``MuonSGD``, O4: an Optax transformation here).
 
-Differences from the Torch version: ``gated_logits`` computes the full views for every image and keeps them where the
-margin is small (the same result, without data-dependent shapes); ``gaussian_basis_3x3`` is orthonormalised by NumPy's
+Differences from the Torch version: ``gated_logits`` gathers the images under the margin into one of a few padded
+sizes (``gate_sizes``) so the full pass compiles a handful of shapes; ``gaussian_basis_3x3`` is orthonormalised by NumPy's
 QR, an orthonormal basis of the same span (the coefficients it stores differ by a fixed rotation; the kernels it can
 represent are the same); ``pca_init``'s eigenvectors are taken in float64.
 """
@@ -29,7 +30,7 @@ represent are the same); ``pca_init``'s eigenvectors are taken in float64.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -342,19 +343,74 @@ def kd_weights(per_example_kl: jax.Array, kind: str) -> jax.Array:
     raise ValueError(f"kd_weighting: 'none', 'disagree' or 'hard', not {kind!r}")
 
 
-def gated_logits(
+def gate_sizes(n: int) -> list[int]:
+    """The subset sizes MT6's full pass runs at, for chunks of ``n``: powers of two from 16 below ``n``, then ``n``, so
+    XLA compiles a handful of shapes rather than one per count of uncertain images."""
+    sizes, k = [], 16
+    while k < n:
+        sizes.append(k)
+        k *= 2
+    return [*sizes, n]
+
+
+def chunked(f: Callable[[Any], jax.Array], x: Any, chunk: int) -> jax.Array:
+    """``f`` over ``x`` (NumPy or JAX, rows first) in chunks of ``chunk`` rows, concatenated. With more than one chunk
+    the last is padded to ``chunk`` with copies of its first row, so ``f`` compiles one shape."""
+    if len(x) <= chunk:
+        return f(x)
+    out = []
+    for a in range(0, len(x), chunk):
+        part = x[a : a + chunk]
+        k = len(part)
+        if k < chunk:
+            part = x[np.r_[a : len(x), np.full(chunk - k, a)]]
+        out.append(f(part)[:k])
+    return jnp.concatenate(out)
+
+
+def masked_logits(
     apply: Callable[[jax.Array], jax.Array], x: jax.Array, level: int, gate: float, tta: Callable[[Callable, jax.Array, int], jax.Array]
-) -> tuple[jax.Array, jax.Array]:
-    """MT6: (logits, share of images that got the full ``level`` views) for normalised images ``x`` through ``apply``
-    (images -> logits): one view, then ``tta(apply, x, level)`` for those whose top-two softmax margin is under
-    ``gate``."""
+) -> jax.Array:
+    """MT6 inside one compiled program: logits of normalised images ``x`` through ``apply`` (images -> logits), one
+    view, replaced by ``tta(apply, x, level)`` where the top-two softmax margin is under ``gate``. The full views run for
+    every image, so it saves nothing; it is the fast form for small batches, where waiting on the margins (as
+    ``gated_logits`` does) costs more than the views it skips (5070 Ti, airbench94: 3.5 ms against 6.3 ms at batch 1,
+    22 ms against 15 ms at 1000)."""
     base = apply(x)
-    if gate <= 0 or level == 0:
-        return base, jnp.zeros(())
-    top2 = jax.lax.top_k(jax.nn.softmax(base.astype(jnp.float32), 1), 2)[0]
-    need = (top2[:, 0] - top2[:, 1]) < gate
-    out = jnp.where(need[:, None], tta(apply, x, level).astype(base.dtype), base)
-    return out, need.astype(jnp.float32).mean()
+    return jnp.where((_margin(base) < gate)[:, None], tta(apply, x, level).astype(base.dtype), base)
+
+
+def gated_logits(
+    cheap: Callable[[Any], jax.Array], full: Callable[[Any], jax.Array], x: Any, gate: float, chunk: int | None = None
+) -> tuple[jax.Array, np.ndarray]:
+    """MT6: (logits, which images got the full pass) for images ``x`` (NumPy or JAX): ``cheap`` (one view) for every
+    image, then ``full`` (the full test-time augmentation) for those whose top-two softmax margin is under ``gate``
+    only, gathered, run in ``chunk``s (the last padded to the next of ``gate_sizes``) and scattered back, so the full
+    pass costs in proportion to their number. ``chunk`` (default: all of ``x`` at once) bounds the images a pass
+    holds. The host waits on the device once, for the margins: the subset's size sets the shapes. Each image's logits
+    come from itself alone, so the result equals the full pass for every image kept where the margin is small
+    (tests/test_methods.py holds the two to equality)."""
+    chunk = chunk or len(x)
+    base = chunked(cheap, x, chunk)
+    need = np.asarray(_margin(base) < gate)
+    idx = np.flatnonzero(need)
+    if idx.size == 0:
+        return base, need
+    size = next(k for k in gate_sizes(chunk) if k >= idx.size) if idx.size <= chunk else idx.size
+    take = np.concatenate([idx, np.full(size - idx.size, idx[0])])
+    # (padding rows are copies of the first gathered image, so scattering them writes that image's own logits again)
+    return _scatter(base, jnp.asarray(take, jnp.int32), chunked(full, x[take], chunk)), need
+
+
+@jax.jit
+def _margin(logits: jax.Array) -> jax.Array:
+    top2 = jax.lax.top_k(jax.nn.softmax(logits.astype(jnp.float32), 1), 2)[0]
+    return top2[:, 0] - top2[:, 1]
+
+
+@jax.jit
+def _scatter(base: jax.Array, take: jax.Array, sub: jax.Array) -> jax.Array:
+    return base.at[take].set(sub.astype(base.dtype))
 
 
 # ---- the whitening layer's filter, set from data and then frozen -------------------------------------------
