@@ -69,3 +69,13 @@ Ampere and newer cards, every card a record was measured on, it is the same run 
 for every image (93.99 % test) in 66 % less wall time. That saving is not realized in the library yet. Shrinking the
 network's MACs gave no speedup on this card, and no architecture change was promoted. Summary:
 `docs/autoresearch/2026-11-10-fp16-t4/SUMMARY.md`.
+
+## 2026-11-11: confidence-gated TTA computes only the views it uses
+
+`methods.gated_logits` now gathers the images under the gate's margin and runs the full views on them alone, in
+chunks of `EVAL_BATCH`, instead of computing every image's full views and masking. airbench94 trained with
+`tta_gate=0.477` on the 5070 Ti (20 % of test images under the margin): the 10,000 test images take 85 ms against
+198 ms masked and 207 ms for six views throughout, with the same 93.69 % and no prediction changed. `Predictor` gathers
+for calls of 500 images or more (1000: 16.6 ms against 22.6 ms) and keeps one masked program below that, where waiting
+on the margins costs more than it saves (batch 1: 3.4 ms either way). This is follow-up 1 of
+`docs/autoresearch/2026-11-10-fp16-t4/SUMMARY.md`.

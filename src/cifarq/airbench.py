@@ -734,30 +734,24 @@ def _train(
     def run_epoch(carry: dict, ep: jax.Array, perm: jax.Array, wb_on: bool) -> tuple[dict, tuple[jax.Array, jax.Array]]:
         return epoch_fn(carry, ep, y_dev, perm, hp, aux_arrays, jnp.asarray(wb_on, jnp.float32))
 
-    def fwd(params: Any, rest: Any, x: jax.Array, level: int, gate: float) -> tuple[jax.Array, jax.Array]:
-        apply = lambda v: S.apply(params, rest, v, train=False)[0]
-        if gate > 0 and level > 0:
-            from .methods import gated_logits
+    def fwd(params: Any, rest: Any, x: jax.Array, level: int) -> jax.Array:
+        return tta_logits(lambda v: S.apply(params, rest, v, train=False)[0], x, level)
 
-            return gated_logits(apply, x, level, gate, tta_logits)
-        return tta_logits(apply, x, level), jnp.asarray(1.0 if level else 0.0)
-
-    fwd_jit = jax.jit(fwd, static_argnums=(3, 4))
+    fwd_jit = jax.jit(fwd, static_argnums=3)
 
     def accuracy(carry: dict, x: np.ndarray, y: np.ndarray, level: int, gate: float = 0.0) -> tuple[float, float]:
-        """(accuracy at ``level``'s views, the share of images given them: 1 unless MT6's ``gate`` is set), ``EVAL_BATCH``
-        images a forward pass."""
-        eb = EVAL_BATCH
-        correct, shares, nn_ = 0, 0.0, len(y)
-        for a, b in jx.batches(nn_, eb):
-            xb = jnp.asarray(x[a:b], dtype)
-            if b - a < eb and nn_ > eb:
-                xb = jnp.concatenate([xb, jnp.zeros((eb - (b - a), *xb.shape[1:]), xb.dtype)])
-            z, share = fwd_jit(carry['params'], carry['rest'], xb, level, float(gate))
-            z = np.asarray(z)[: b - a]
-            correct += int((z.argmax(1) == np.asarray(y[a:b])).sum())
-            shares += float(share) * (b - a)
-        return correct / nn_, shares / nn_
+        """(accuracy at ``level``'s views, the share of images given them: 1 unless MT6's ``gate`` is set, then those
+        ``methods.gated_logits`` gave the full pass), ``EVAL_BATCH`` images a forward pass."""
+        from .methods import chunked, gated_logits
+
+        p, r = carry['params'], carry['rest']
+        on = lambda lv: lambda v: fwd_jit(p, r, jnp.asarray(v, dtype), lv)
+        if gate > 0 and level > 0:
+            z, need = gated_logits(on(0), on(level), x, gate, EVAL_BATCH)
+            share = float(need.mean())
+        else:
+            z, share = chunked(on(level), x, EVAL_BATCH), 1.0 if level else 0.0
+        return float((np.asarray(z).argmax(1) == np.asarray(y)).mean()), share
 
     carry = {'params': S.params, 'rest': S.rest, 'opt': tx0.init(S.params), 'step': jnp.zeros((), jnp.int32)}
     if h['lookahead']:
@@ -940,25 +934,36 @@ class Predictor:
         self.split = jx.Split(self.net)
         self.params, self.rest = jax.device_put((self.split.params, self.split.rest), self.device)
         self.tta = self.h['tta_level'] if tta_level is None else tta_level
-        gate = float(self.h.get('tta_gate', 0))
-        S, tta = self.split, self.tta
+        self.gate = float(self.h.get('tta_gate', 0))
+        S, tta, gate = self.split, self.tta, self.gate
 
-        def fwd(params: Any, rest: Any, images: jax.Array) -> jax.Array:
-            x = jx.normalise(images, MEAN, STD).astype(self.dtype)
-            apply = lambda v: S.apply(params, rest, v, train=False)[0]
-            if gate > 0 and tta:  # (MT6: the full views only where the margin is small)
-                from .methods import gated_logits
+        def logits(params: Any, rest: Any, images: jax.Array, level: int) -> jax.Array:
+            return tta_logits(lambda v: S.apply(params, rest, v, train=False)[0], jx.normalise(images, MEAN, STD).astype(self.dtype), level)
 
-                logits = gated_logits(apply, x, tta, gate, tta_logits)[0]
-            else:
-                logits = tta_logits(apply, x, tta)
-            return jax.nn.softmax(logits.astype(jnp.float32), 1)
+        def probs(params: Any, rest: Any, images: jax.Array) -> jax.Array:
+            from .methods import masked_logits
 
-        self._fwd = jax.jit(fwd)
+            apply, x = lambda v: S.apply(params, rest, v, train=False)[0], jx.normalise(images, MEAN, STD).astype(self.dtype)
+            z = masked_logits(apply, x, tta, gate, tta_logits) if gate > 0 and tta else tta_logits(apply, x, tta)
+            return jax.nn.softmax(z.astype(jnp.float32), 1)
+
+        self._logits = jax.jit(logits, static_argnums=3)
+        self._probs = jax.jit(probs)
 
     def predict(self, images: NPArrayLike) -> np.ndarray:
+        """Probabilities. Under MT6's gate a call of ``EVAL_BATCH`` images or more gathers the uncertain ones
+        (``methods.gated_logits``, in chunks of ``EVAL_BATCH``); a smaller one runs as one program
+        (``methods.masked_logits``), faster there than waiting on the margins."""
         import jax
+        import jax.numpy as jnp
         import numpy as np
 
+        from .methods import gated_logits
+
         x = jax.device_put(np.ascontiguousarray(images, dtype=np.uint8), self.device)
-        return np.asarray(self._fwd(self.params, self.rest, x))
+        p, r = self.params, self.rest
+        if self.gate > 0 and self.tta and len(x) >= EVAL_BATCH:
+            on = lambda lv: lambda v: self._logits(p, r, v, lv)
+            z = gated_logits(on(0), on(self.tta), x, self.gate, EVAL_BATCH)[0]
+            return np.asarray(jax.nn.softmax(z.astype(jnp.float32), 1))
+        return np.asarray(self._probs(p, r, x))

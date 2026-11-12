@@ -140,13 +140,19 @@ def test_flip_equivariant_groups_are_invariant_to_mirroring():
         {'tta_gate': 0.5, 'tta_level': 2},
     ],
 )
-def test_methods_train_save_and_reload(built, tmp_path, extra):
+def test_methods_train_save_and_reload(built, tmp_path, monkeypatch, extra):
     r = airbench.train(**{**SMALL, **extra}, save=str(tmp_path / 'm'))
     assert_reload_predicts(r, built)
     if 'tails' in extra:
         assert r['epochs_charged'] == 4 and r['history'][-1]['epoch'] == 'tails-averaged'
     if 'tta_gate' in extra:
         assert 1 <= r['views_per_image'] <= 7
+        # a call of EVAL_BATCH images or more gathers (gated_logits), a smaller one masks (masked_logits): the same
+        monkeypatch.setattr(airbench, 'EVAL_BATCH', 64)
+        pred = airbench.Predictor(r['saved'])
+        whole = pred.predict(built['x_test'])
+        parts = np.concatenate([pred.predict(built['x_test'][a : a + 40]) for a in range(0, len(built['x_test']), 40)])
+        assert np.allclose(whole, parts, atol=1e-5)
 
 
 def test_tied_depth_adds_no_convolution_weights():
