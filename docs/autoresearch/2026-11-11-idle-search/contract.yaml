@@ -1,0 +1,16 @@
+# The evaluation contract, written before the first experiment (the autoresearch skill).
+kind: model
+objective: "one-view validation accuracy (val_1view = val_acc at tta_level 0), mean of seeds 0 and 1, on the fixed 5000-image split, 40 epochs"
+direction: max
+tolerance: "0.003: 3-seed means of one configuration ran 0.3 pp apart run to run (eqsm RESULT, noise finding)"
+gates:
+  - the test split is sealed during searches (families.train_two_seeds) and opened once per finalist (open_test.py)
+  - a new best counts only after a retrain over 5 seeds at 40 and 100 epochs
+evaluator: "cifarq.airbench.train through families.train_two_seeds, driven by pipeline/55_tune_on_vm.py --family eqaug"
+rejects_failures: "failed trials fail their Optuna trial; pruned and over-cap trials never become the best"
+baseline: "FIN (families.WARM eqaug, first point) as trial 0 of each study; reference FIN at 40 epochs, 95.27 % val over 3 seeds (eqsm M3)"
+variability: "about 0.3 pp between 3-seed means of the same configuration (cudnn algorithm choice per run)"
+editable: "nothing during a study; families.eqaug_space between studies"
+protected: "the test split, the dataset manifests, candidates.jsonl history, the distillation teacher"
+budget: "local RTX 5070 Ti only, idle time, no paid cards; each study bounded by --minutes"
+stop: "the user needs the GPU, or 3 studies in a row without a new best above the tolerance"

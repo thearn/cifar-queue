@@ -1,0 +1,17 @@
+{"when": "2026-11-11T20:35:37", "kind": "baseline"}
+{"when": "2026-11-11T20:36:29", "by": "cifar", "kind": "milestone", "id": "M1", "title": "Smoke: a short warm-started search shows in the app", "from": null, "to": "active"}
+{"when": "2026-11-11T20:36:47", "by": "cifar", "kind": "milestone", "id": "M2", "title": "Idle-time studies from the best known configuration", "from": null, "to": "planned"}
+{"when": "2026-11-11T20:37:06", "by": "cifar", "kind": "milestone", "id": "M3", "title": "A new best confirmed over seeds", "from": null, "to": "planned"}
+{"when": "2026-11-11T20:40:53", "by": "cifar", "kind": "score", "name": "val_acc", "value": 0.9332, "job": "00001-train", "previous": null, "direction": "max"}
+{"when": "2026-11-11T20:42:05", "by": "cifar", "kind": "score", "name": "val_acc", "value": 0.9488, "job": "00002-train", "previous": 0.9332, "direction": "max"}
+{"when": "2026-11-11T20:43:14", "by": "cifar", "kind": "milestone", "id": "M1", "title": "Smoke: a short warm-started search shows in the app", "from": "active", "to": "done"}
+{"when": "2026-11-11T20:43:33", "by": "cifar", "kind": "now", "text": "Smoke search done on the 5070 Ti: Page's recipe 93.32 % val; the best known configuration re-scored by the JAX code 94.88 % val, 94.56 % test (PyTorch: 95.12 / 94.59). Waiting on the choice of search family before the idle-time studies."}
+{"when": "2026-11-11T20:43:33", "by": "cifar", "kind": "next", "text": "Decide b0 (wider bounds, fixed budget) or eqairbench (warm from the front candidate), then start studies"}
+{"when": "2026-11-11T20:50:37", "by": "cifar", "kind": "goals", "goals": ["Use idle local GPU time to find a better one-view CIFAR-10 model under 2 M parameters than the flip-equivariant airbench finalists"]}
+{"when": "2026-11-11T20:51:13", "by": "cifar", "kind": "milestone", "id": "M1b", "title": "Smoke: a short eqaug study shows in the app", "from": null, "to": "active"}
+{"when": "2026-11-11T20:55:01", "by": "cifar", "kind": "now", "text": "Switched the idle search to the flip-equivariant airbench (eqaug space: 40 epochs, two seeds, policy augmentation open). The PyTorch distillation teacher did not load in JAX, so it was retrained locally (job 4455, val 95.94 %; old one kept as ab96-45k-s0-torch). A 3-trial eqaug smoke study is running on the 5070 Ti."}
+{"when": "2026-11-11T20:55:01", "by": "cifar", "kind": "next", "text": "Read the smoke's time per trial, then start idle-time studies"}
+{"when": "2026-11-11T20:59:33", "by": "cifar", "kind": "score", "name": "val_1view", "value": 0.9517, "job": "trial 0", "previous": null, "direction": "max"}
+{"when": "2026-11-11T21:09:29", "by": "cifar", "kind": "milestone", "id": "M1b", "title": "Smoke: a short eqaug study shows in the app", "from": "active", "to": "done"}
+{"when": "2026-11-11T21:09:49", "by": "cifar", "kind": "now", "text": "eqaug smoke done on the 5070 Ti: FIN 95.17 % one-view val (two seeds, 40 epochs), T39 95.05 %, about 4.6 min a trial. The JAX teacher (val 95.94 %) replaces the PyTorch one. Ready for an overnight study."}
+{"when": "2026-11-11T21:09:49", "by": "cifar", "kind": "next", "text": "Start the overnight eqaug study (8 h, ~100 trials before pruning)"}

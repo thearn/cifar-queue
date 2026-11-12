@@ -1,0 +1,80 @@
+{
+ "state": "running",
+ "milestones": [
+  {
+   "id": "M1",
+   "state": "done",
+   "title": "Smoke: a short warm-started search shows in the app",
+   "note": "3 trials local: Page 0.9332, best known re-scored by JAX 0.9488 val / 0.9456 test in 62 s"
+  },
+  {
+   "id": "M2",
+   "state": "planned",
+   "title": "Idle-time eqaug studies (flip-equivariant airbench, policy augmentation open)",
+   "blocked_by": [
+    "M1b"
+   ]
+  },
+  {
+   "id": "M3",
+   "state": "planned",
+   "title": "A new best confirmed over seeds",
+   "blocked_by": [
+    "M2"
+   ]
+  },
+  {
+   "id": "M1b",
+   "state": "done",
+   "title": "Smoke: a short eqaug study shows in the app",
+   "note": "3 trials, two seeds x 40 epochs, 824 s (~4.6 min a trial): FIN 95.17, T39 95.05, a TPE point 94.47; scoreboard updated live"
+  }
+ ],
+ "goals": [
+  "Use idle local GPU time to find a better one-view CIFAR-10 model under 2 M parameters than the flip-equivariant airbench finalists"
+ ],
+ "updated": "2026-11-11T21:09:49",
+ "kind": "model",
+ "scoreboard": [
+  {
+   "name": "val_acc",
+   "direction": "max",
+   "target": {
+    "value": 0.9512,
+    "label": "best known (on-vm-20261029-180543)"
+   },
+   "baseline": {
+    "value": 0.9332,
+    "label": "Page's recipe"
+   },
+   "best": {
+    "value": 0.9488,
+    "job": "00002-train",
+    "when": "2026-11-11T20:42:05"
+   }
+  },
+  {
+   "name": "val_1view",
+   "direction": "max",
+   "target": {
+    "value": 0.9527,
+    "label": "FIN at 40 epochs, 3 seeds (eqsm M3)"
+   },
+   "baseline": {
+    "value": 0.9517,
+    "label": "first starting point"
+   },
+   "best": {
+    "value": 0.9517,
+    "job": "trial 0",
+    "when": "2026-11-11T20:59:33"
+   }
+  }
+ ],
+ "now": "eqaug smoke done on the 5070 Ti: FIN 95.17 % one-view val (two seeds, 40 epochs), T39 95.05 %, about 4.6 min a trial. The JAX teacher (val 95.94 %) replaces the PyTorch one. Ready for an overnight study.",
+ "next": "Start the overnight eqaug study (8 h, ~100 trials before pruning)",
+ "glossary": {
+  "eqaug": "the idle search's space: flip-equivariant airbench, 40 epochs, two seeds, policy augmentation open (families.eqaug_space)",
+  "FIN": "the flip-equivariant airbench finalist: 128/112/144, 1.94 M parameters"
+ }
+}
