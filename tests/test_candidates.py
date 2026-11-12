@@ -32,3 +32,15 @@ def test_a_champion_names_the_candidate_it_retrained():
     }
     e = C.from_record('champion', rec, 'results/champion/x.json')
     assert e['from'] == 'tune-a' and e['value'] == 0.945 and e['seeds'] == 2
+
+
+def test_a_search_starts_from_the_best_or_a_named_candidate(tmp_path):
+    import pytest
+
+    f = tmp_path / 'candidates.jsonl'
+    for name, v in (('a', 0.93), ('b', 0.95)):
+        C.record({**C.from_record('on-vm', {'best_value': v, 'best_params': {'lr': v}}, f'results/on-vm/{name}.json'), 'code': {'tree': 't'}}, f)
+    assert C.start_point('best', f)['params'] == {'lr': 0.95}
+    assert C.start_point('on-vm-a', f)['value'] == 0.93
+    with pytest.raises(KeyError):
+        C.start_point('nope', f)

@@ -63,3 +63,22 @@ def test_short_search(built):
     study.enqueue_trial(tune.REFERENCE)
     study.optimize(lambda t: train.train(**{**tune.space(t), 'epochs': 1, **SMALL})[tune.OBJECTIVE], n_trials=3)
     assert len(study.trials) == 3 and study.best_value > 0.1
+
+
+def test_a_start_point_is_checked_against_the_space():
+    assert tune.misfit(dict(tune.PAGE)) == []
+    bad = {**tune.PAGE, 'width': 7, 'not_a_knob': 1}
+    bad.pop('epochs')
+    problems = tune.misfit(bad)
+    assert any(p.startswith('epochs: missing') for p in problems)
+    assert any(p.startswith('width: 7 outside') for p in problems)
+    assert 'not_a_knob: not in the space' in problems
+
+
+def test_the_idle_search_starts_from_the_best_known_eqairbench_points():
+    import functools
+
+    from cifarq import families
+
+    space = functools.partial(families.eqaug_space, kd='teacher')
+    assert [tune.misfit(p, space) for p in families.WARM['eqaug']] == [[], []]

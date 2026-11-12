@@ -11,6 +11,11 @@ local). For a pruned search on a Colab card, run the whole search inside one job
     python pipeline/50_tune.py --resume                                  # the latest study, after its driver died
     python pipeline/50_tune.py --storage results/distributed-study.db --resume --no-schedule-free
     python pipeline/50_tune.py --trials 20 --targets local --prune rungs --cold --seed 1
+    python pipeline/50_tune.py --trials 200 --minutes 120 --targets local --prune rungs --start-from best   # idle GPU time
+
+--start-from queues a candidates.jsonl entry (checked against the space) after Page's recipe. With a registered runq
+session (RUNQ_SESSION), each new best goes to its scoreboard: the app's best-so-far line, Page's recipe its baseline
+and the starting candidate its target.
 """
 
 import argparse
@@ -20,7 +25,7 @@ import time
 from pathlib import Path
 
 import optuna
-from common import RESULTS, ROOT, dataset_file, executor, record, stage_targets, targets_arg
+from common import RESULTS, ROOT, dataset_file, executor, record, session_score, stage_targets, start_from_arg, start_point, targets_arg
 from runq.search.hpo import make_pruner, optuna_optimize
 
 from cifarq import tune
@@ -41,7 +46,9 @@ if __name__ == '__main__':
         action='store_true',
         help='the space before schedule-free training (studies made before it, such as distributed-study.db)',
     )
+    start_from_arg(ap)
     a = ap.parse_args()
+    start = start_point(a.start_from, schedule_free=not a.no_schedule_free)
     targets = stage_targets('tune', a.targets)
     if a.prune and set(targets) - {'direct', 'local'}:
         raise SystemExit('--prune: the trials must reach the study database, so direct or local targets only')
@@ -62,6 +69,24 @@ if __name__ == '__main__':
         )
         if not a.cold:
             study.enqueue_trial(tune.REFERENCE)
+        if start:
+            study.enqueue_trial(start[1])
+    if start:
+        session_score('val_acc', target=start[2], target_label=f'best known ({start[0]})', direction='max')
+    shown = {'best': None, 'baseline': None}
+
+    def log(line: str) -> None:
+        """The search's line per trial; Page's recipe's value and each new best to the session's scoreboard."""
+        print(line, flush=True)
+        done = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+        page = next((t.value for t in done if t.system_attrs.get('fixed_params') == tune.REFERENCE), None)
+        if page is not None and shown['baseline'] is None:
+            shown['baseline'] = page
+            session_score('val_acc', baseline=page, baseline_label="Page's recipe")
+        if done and study.best_value != shown['best']:
+            shown['best'], b = study.best_value, study.best_trial
+            session_score('val_acc', best=b.value, job=Path(b.user_attrs.get('job', '')).name or None)
+
     print(f'trials in flight: {targets}', flush=True)
     space = (lambda t: tune.space(t, schedule_free=False)) if a.no_schedule_free else tune.space
     t0 = time.time()
@@ -79,6 +104,7 @@ if __name__ == '__main__':
             report_to=storage if a.prune else None,
             smooth=bool(a.prune),
             minutes=a.minutes,
+            log=log,
         )
     done = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
     best = study.best_trial
@@ -98,7 +124,7 @@ if __name__ == '__main__':
         },
         'by_device': dict(collections.Counter(t.user_attrs.get('device', '?') for t in done)),
         'minutes_to': tune._minutes_to(study, (0.92, 0.93)),
-        'start': 'cold' if a.cold else 'Page',
+        'start': ('cold' if a.cold else 'Page') + (f' + {start[0]}' if start else ''),
         'seed': a.seed,
         'targets': targets,
         'search_seconds': round(time.time() - t0, 1),

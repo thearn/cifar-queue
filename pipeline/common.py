@@ -71,16 +71,28 @@ def stage_targets(stage: str, override: list[str] | None = None) -> dict:
 def executor(stage: str, targets: dict, data=(), send=(), **hints) -> Executor:
     """The stage's executor: ``Direct`` for ``{"direct": n}``, else a ``QueueExecutor`` over ``targets`` that sends the
     package's code (src/) and ``data`` (files that never change, once per VM by content) with each job."""
-    root = RESULTS / 'jobs' / stage
     hints = {**{k: v for k, v in COMPUTE['stages'].get(stage, {}).items() if k != 'targets'}, **hints}
     if 'direct' in targets:
         if len(targets) > 1:
             raise SystemExit('direct runs in this process: it cannot share a stage with queue targets')
-        return Direct(root)
+        return Direct(RESULTS / 'jobs' / stage)
+    from runq.queue.collect import job_dir
     from runq.search.futures import QueueExecutor
 
     ensure_executors(targets)
-    return QueueExecutor(root, targets=targets, path=[SRC, *send], data=[str(d) for d in data], **hints)
+    # (queue jobs live under runq's own root since 2026-11-11, which refuses others: ``job_roots`` finds both)
+    return QueueExecutor(job_dir(stage), targets=targets, path=[SRC, *send], data=[str(d) for d in data], **hints)
+
+
+def job_roots(stage: str) -> list[Path]:
+    """Where ``stage``'s job directories are: ``results/jobs/STAGE`` (direct runs, and queue jobs before 2026-11-11) and
+    runq's root for the session (queue jobs since)."""
+    roots = [RESULTS / 'jobs' / stage]
+    try:
+        from runq.queue.collect import job_dir
+    except ImportError:
+        return roots
+    return [*roots, job_dir(stage)]
 
 
 def targets_arg(ap: argparse.ArgumentParser):
@@ -159,3 +171,46 @@ def dataset_file() -> Path:
     if not f.exists():
         raise SystemExit('no dataset: run pipeline/30_dataset.py first')
     return f
+
+
+def start_from_arg(ap: argparse.ArgumentParser):
+    ap.add_argument(
+        '--start-from',
+        metavar='CANDIDATE',
+        help="a candidates.jsonl entry ('best': the best search result) as a trial after Page's recipe (also with --cold)",
+    )
+
+
+def start_point(spec: str | None, schedule_free: bool = True) -> tuple[str, dict, float] | None:
+    """The candidate ``spec`` (``start_from_arg``) as (its id, its hyperparameters, its value), checked against the search space;
+    a candidate that does not fit stops the run with the reasons."""
+    if not spec:
+        return None
+    from cifarq import tune
+
+    try:
+        entry = candidates.start_point(spec)
+    except KeyError as e:
+        raise SystemExit(str(e)) from None
+    problems = tune.misfit(entry['params'], lambda t: tune.space(t, schedule_free=schedule_free))
+    if problems:
+        raise SystemExit(f'--start-from {entry["id"]} does not fit the search space: ' + '; '.join(problems))
+    ds = (paths.read_manifest('dataset') or {}).get('sha256')
+    stale = (
+        ' (stale: scored on another dataset or by other code, so its value here is unknown)'
+        if candidates.stale(entry, ds, candidates.code_identity())
+        else ''
+    )
+    print(f'starting from {entry["id"]}: val_acc {entry["value"]}{stale}', flush=True)
+    return entry['id'], dict(entry['params']), entry['value']
+
+
+def session_score(metric: str, **fields) -> None:
+    """Update the runq session's scoreboard entry ``metric`` (the app's best-so-far line), when the session
+    (RUNQ_SESSION) is registered; a record, never a reason to stop a search."""
+    from runq.campaigns import sessions
+
+    try:
+        sessions.score(metric, **fields)
+    except (sessions.SessionError, OSError, ValueError) as e:
+        print(f'(scoreboard not updated: {e})', flush=True)

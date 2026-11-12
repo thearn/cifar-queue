@@ -8,6 +8,7 @@ job's directory; progress.json and study.db come back every two minutes while it
     python pipeline/55_tune_on_vm.py --target colab:cifar-g4 --cold --pruner rungs --minutes 45
     python pipeline/55_tune_on_vm.py --target local --concurrent 1 --trials 4 --minutes 5      # the 4060, as a test
     python pipeline/55_tune_on_vm.py --resume                            # the latest run's study, on a new job
+    python pipeline/55_tune_on_vm.py --target colab:cifar-g4 --pruner rungs --minutes 45 --start-from best
 """
 
 import argparse
@@ -16,7 +17,22 @@ import shutil
 import time
 from pathlib import Path
 
-from common import COMPUTE, RESULTS, dataset_file, executor, record, stage_targets
+from common import COMPUTE, RESULTS, dataset_file, executor, job_roots, record, session_score, stage_targets, start_from_arg, start_point
+
+
+def show_on_scoreboard(doc: dict, scored: dict, family: str) -> dict:
+    """The runq session's scoreboard (the app's best-so-far line) from the job's progress.json: the first starting
+    point's value as the baseline, then each new best; what is shown so far."""
+    metric = 'val_acc' if family == 'b0' else 'val_1view'
+    warm = doc.get('warm_values') or []
+    if warm and 'baseline' not in scored:
+        session_score(metric, baseline=warm[0], baseline_label="Page's recipe" if family == 'b0' else 'first starting point', direction='max')
+        scored['baseline'] = warm[0]
+    if doc.get('best_value') is not None and doc['best_value'] != scored.get('best'):
+        session_score(metric, best=doc['best_value'], job=f'trial {doc["best_trial"]}')
+        scored['best'] = doc['best_value']
+    return scored
+
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
@@ -77,7 +93,11 @@ if __name__ == '__main__':
         default={},
         help='JSON: values set in every starting point (with --kd: {"kd": true, "kd_weight": 0.5, "kd_temp": 4.0})',
     )
+    start_from_arg(ap)
     a = ap.parse_args()
+    if a.start_from and (a.family != 'b0' or a.warm_from or a.driver == 'ray'):
+        raise SystemExit('--start-from: the b0 space with the Optuna driver, without --warm-from')
+    start = start_point(a.start_from, schedule_free=not a.no_schedule_free)
     slot_key = 'cifar-trial' if a.family == 'b0' else f'cifar-{a.family}'
     target = a.target or next(iter(stage_targets('tune_on_vm')))
     gpu = shape = None
@@ -101,7 +121,7 @@ if __name__ == '__main__':
         resume = {'resume_from': str(frozen)}
     elif a.resume:
         dbs = sorted(
-            [*(RESULTS / 'jobs' / 'on-vm').glob('*/study.db'), *(RESULTS / 'jobs' / 'tune_on_vm').glob('*/study.db')], key=lambda p: p.stat().st_mtime
+            [db for stage in ('on-vm', 'tune_on_vm') for root in job_roots(stage) for db in root.glob('*/study.db')], key=lambda p: p.stat().st_mtime
         )
         if not dbs:
             raise SystemExit('no earlier mode 2 study to resume')
@@ -120,6 +140,10 @@ if __name__ == '__main__':
         best = sorted((t for t in old.trials if t.state.name == 'COMPLETE'), key=lambda t: -t.value)[: a.warm_top]
         warm_points = [{**t.params, **a.warm_set} for t in best]
         print(f'starting from {a.warm_from} trials {[t.number for t in best]}', flush=True)
+    elif start:
+        from cifarq import tune
+
+        warm_points = [*([] if a.cold else [tune.PAGE]), {**start[1], **a.warm_set}]
     t0 = time.time()
     data = str(dataset_file())
     hints = {
@@ -157,7 +181,7 @@ if __name__ == '__main__':
                 concurrent=a.concurrent,
                 pruner_settings=a.pruner_settings,
                 schedule_free=not a.no_schedule_free,
-                warm=not a.cold,
+                warm=not a.cold or bool(start),
                 seed=a.seed,
                 startup=a.startup,
                 family=a.family,
@@ -169,7 +193,7 @@ if __name__ == '__main__':
                 **resume,
             )
         print(f'job {future.job}', flush=True)
-        seen = None
+        seen, scored = None, {}
         while not future.done():
             time.sleep(20)
             p = future.job / 'progress.json'
@@ -181,6 +205,7 @@ if __name__ == '__main__':
                     f'best {doc["best_value"]} (trial {doc["best_trial"]}, test {doc["best_test_acc"]})',
                     flush=True,
                 )
+                scored = show_on_scoreboard(doc, scored, a.family)
         result = future.result()
     result['wall_seconds_from_submit'] = round(time.time() - t0, 1)
     if gpu and not a.concurrent and result.get('calibration') and not result['calibration'][0].get('given'):

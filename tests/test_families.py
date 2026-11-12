@@ -21,7 +21,12 @@ def test_the_space_reaches_both_sides_of_the_cap(family):
     over = 0
     for _ in range(60):
         t = study.ask()
-        p = families.SPACES[family](t)
+        try:
+            p = families.SPACES[family](t)
+        except optuna.TrialPruned:  # (eqaug refuses an over-cap point itself, before it runs)
+            over += 1
+            study.tell(t, state=optuna.trial.TrialState.PRUNED)
+            continue
         h = {**airbench.DEFAULTS, **{k: v for k, v in p.items() if k != 'param_cap'}}
         over += airbench.param_counts(airbench.build(h, abstract=True)[0])['stored'] > p['param_cap']
         study.tell(t, 0.0)

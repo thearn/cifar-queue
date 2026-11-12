@@ -34,3 +34,6 @@ hub.ResNet9._from_pretrained
 
 # a queue job names it as a string (tune.TRAIN_SEEDS: pipeline/60_champion.py)
 train.train_seeds
+
+# tune.misfit: Probe overrides optuna.trial.FixedTrial._suggest, which FixedTrial.suggest_* call
+tune.misfit.Probe._suggest

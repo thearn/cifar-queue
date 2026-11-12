@@ -123,20 +123,11 @@ def pyramidnet_space(trial: optuna.Trial, cap: int = 2_000_000, max_epochs: floa
     return {**p, **recipe(trial, max_epochs, kd), 'param_cap': cap}
 
 
-def eqairbench_space(
-    trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 100, kd: str = '', lows: tuple[int, int, int] = (96, 96, 112)
-) -> dict:
-    """Session 2026-10-30-equivariant-small, M5: the flip-equivariant airbench (depth 3; the last 1 or 2 groups
-    equivariant, M3's winner), structured receptive fields on or off (M4's one non-negative lever), widths under the
-    cap, and the recipe around the finalist's at a fixed ``max_epochs`` (E*). Scored at one view (``tta_level`` 0;
-    ``val_acc_by_views`` still reports 2 and 6). Distillation from ``kd`` (one airbench96) with its weight free."""
+def _eq_recipe(trial: optuna.Trial, max_epochs: float) -> dict:
+    """The recipe around the flip-equivariant finalist's at a fixed ``max_epochs`` (session 2026-10-30, M5), scored at
+    one view (``tta_level`` 0; ``val_acc_by_views`` still reports 2 and 6)."""
     c, s = trial.suggest_categorical, trial.suggest_float
-    p = {
-        'arch': 'airbench',
-        'depth': 3,
-        'flip_eq': c('flip_eq', [1, 2]),
-        'srf': c('srf', [False, True]),
-        'widths': (c('w1', list(range(lows[0], 184, 8))), c('w2', list(range(lows[1], 200, 8))), c('w3', list(range(lows[2], 232, 8)))),
+    return {
         'epochs': float(max_epochs),
         'batch_size': c('batch_size', [512, 1024]),
         'lr': s('lr', 4.0, 14.0, log=True),
@@ -153,11 +144,58 @@ def eqairbench_space(
         'scaling_factor': s('scaling_factor', 1 / 25, 1 / 8, log=True),
         'tta_level': 0,
         'lookahead': True,
-        'augment': 'none',
-        'param_cap': cap,
     }
+
+
+def _widths(trial: optuna.Trial, lows: tuple[int, int, int]) -> tuple[int, int, int]:
+    c = trial.suggest_categorical
+    return (c('w1', list(range(lows[0], 184, 8))), c('w2', list(range(lows[1], 200, 8))), c('w3', list(range(lows[2], 232, 8))))
+
+
+def eqairbench_space(
+    trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 100, kd: str = '', lows: tuple[int, int, int] = (96, 96, 112)
+) -> dict:
+    """Session 2026-10-30-equivariant-small, M5: the flip-equivariant airbench (depth 3; the last 1 or 2 groups
+    equivariant, M3's winner), structured receptive fields on or off (M4's one non-negative lever), widths under the
+    cap, and the recipe around the finalist's (``_eq_recipe``). Distillation from ``kd`` (one airbench96) with its
+    weight free."""
+    c, s = trial.suggest_categorical, trial.suggest_float
+    p = {'arch': 'airbench', 'depth': 3, 'flip_eq': c('flip_eq', [1, 2]), 'srf': c('srf', [False, True]), 'widths': _widths(trial, lows)}
+    p.update(_eq_recipe(trial, max_epochs), augment='none', param_cap=cap)
     if kd:
         p.update(kd_teacher=kd, kd_weight=s('kd_weight', 0.0, 0.4), kd_temp=s('kd_temp', 2.0, 8.0, log=True))
+    return p
+
+
+def eqaug_space(trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 40, kd: str = '') -> dict:
+    """Session 2026-11-11-idle-search: ``eqairbench_space`` with what earlier sessions settled fixed and what they never
+    measured opened. Flip equivariance in the last two groups (1 never led); policy augmentation (TrivialAugment wide,
+    RandAugment), off in every earlier eqairbench study, while one-view accuracy saturated past 80 epochs, a sign of
+    regularisation; distillation's weight down to none. A fixed, short ``max_epochs`` (40) for idle-time trials; a
+    point over ``cap`` is refused before it runs (``refuse_over_cap``)."""
+    c, s = trial.suggest_categorical, trial.suggest_float
+    p = {'arch': 'airbench', 'depth': 3, 'flip_eq': 2, 'srf': c('srf', [False, True]), 'widths': _widths(trial, (96, 96, 112))}
+    p.update(_eq_recipe(trial, max_epochs), param_cap=cap)
+    p['augment'] = c('augment', ['none', 'ta_wide', 'randaugment'])
+    if p['augment'] == 'randaugment':
+        p['augment_m'] = trial.suggest_int('augment_m', 2, 15)
+    if kd:
+        p.update(kd_teacher=kd, kd_weight=s('kd_weight', 0.0, 0.4), kd_temp=s('kd_temp', 2.0, 8.0, log=True))
+    return refuse_over_cap(trial, p)
+
+
+def refuse_over_cap(trial: optuna.Trial, p: dict) -> dict:
+    """``p``, its stored parameters kept on the trial; over its ``param_cap``, refused here (raised as
+    ``optuna.TrialPruned``: told pruned with no training, so the sampler still learns the boundary), as the trainer
+    would refuse it at step 0 after a job's round trip (phase B, 2026-11-05: 3 of 12 trials)."""
+    import optuna
+
+    from .airbench import DEFAULTS, build, param_counts
+
+    stored = param_counts(build({**DEFAULTS, **p}, abstract=True)[0])['stored']
+    trial.set_user_attr('params', stored)
+    if stored > p['param_cap']:
+        raise optuna.TrialPruned(f'{stored} parameters, over the cap of {p["param_cap"]}')
     return p
 
 
@@ -167,6 +205,7 @@ SPACES = {
     'convmixer': convmixer_space,
     'pyramidnet': pyramidnet_space,
     'eqairbench': eqairbench_space,
+    'eqaug': eqaug_space,
 }
 
 # airbench94's recipe (1.97 M, widths 64/256/256) as a point of the airbench space, at the cap's epochs
@@ -246,6 +285,34 @@ WARM['eqairbench'] = [
     {**_FIN, 'flip_eq': 2, 'srf': False, 'w1': 128, 'w2': 112, 'w3': 144},
     {**_FIN, 'flip_eq': 2, 'srf': True, 'w1': 160, 'w2': 136, 'w3': 176},
 ]
+# the two best known one-view points, without the flip_eq the space fixes: FIN (D1 D1, 128/112/144) and T39 (the
+# front's best, front-20261105-170738: SRF, 168/128/184, 95.73 % two-seed validation at 100 epochs)
+WARM['eqaug'] = [
+    {**{k: v for k, v in point.items() if k != 'flip_eq'}, 'augment': 'none'}
+    for point in (
+        WARM['eqairbench'][0],
+        {
+            'srf': True,
+            'w1': 168,
+            'w2': 128,
+            'w3': 184,
+            'batch_size': 512,
+            'lr': 11.829422,
+            'momentum': 0.802772,
+            'weight_decay': 0.004272,
+            'bias_scaler': 69.82426,
+            'label_smoothing': 0.134185,
+            'warmup_frac': 0.086056,
+            'final_lr_frac': 0.03583,
+            'bn_momentum': 0.038894,
+            'translate': 3,
+            'cutout': 12,
+            'scaling_factor': 0.0527,
+            'kd_weight': 0.233606,
+            'kd_temp': 2.59562,
+        },
+    )
+]
 CALIBRATE = {
     'airbench': {'epochs': 2, 'widths': (64, 256, 256)},
     'resnet9': {'epochs': 2, 'arch': 'resnet9', 'arch_kw': {'width': 32}},
@@ -253,6 +320,7 @@ CALIBRATE = {
     'pyramidnet': {'epochs': 1, 'arch': 'pyramidnet', 'arch_kw': {'depth': 110, 'alpha': 48}, 'batch_size': 256},
     'eqairbench': {'epochs': 2, 'widths': (128, 112, 144), 'depth': 3, 'flip_eq': 2},
 }
+CALIBRATE['eqaug'] = CALIBRATE['eqairbench']
 
 
 # ---- the accuracy / compute front (2026-11-05): the two-objective study session 2026-10-30 planned (M7) and drew
@@ -299,19 +367,8 @@ AB96_45K = {
 
 
 def front_space(trial: optuna.Trial, kd: str = '') -> dict:
-    """``eqairbench_space`` with the front's widths; a point over the parameter cap is refused here (raised as
-    ``optuna.TrialPruned``: told pruned by runq with no job, so the sampler still learns the boundary), as the trainer
-    would refuse it at step 0 after a job's round trip (phase B, 2026-11-05: 3 of 12 trials)."""
-    import optuna
-
-    from .airbench import DEFAULTS, build, param_counts
-
-    p = eqairbench_space(trial, max_epochs=100, kd=kd, lows=FRONT_LOWS)
-    stored = param_counts(build({**DEFAULTS, **p}, abstract=True)[0])['stored']
-    trial.set_user_attr('params', stored)
-    if stored > p['param_cap']:
-        raise optuna.TrialPruned(f'{stored} parameters, over the cap of {p["param_cap"]}')
-    return p
+    """``eqairbench_space`` with the front's widths, a point over the parameter cap refused before it runs."""
+    return refuse_over_cap(trial, eqairbench_space(trial, max_epochs=100, kd=kd, lows=FRONT_LOWS))
 
 
 def macs_of(params: dict) -> int:

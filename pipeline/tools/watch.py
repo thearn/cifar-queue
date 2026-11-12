@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 import optuna
+from runq.queue.collect import job_dir  # (queue jobs' directories since 2026-11-11)
 
 RESULTS = Path(__file__).resolve().parents[2] / 'results'
 KEYS = ('width', 'epochs', 'optimizer', 'sgd_lr', 'adamw_lr', 'batch_size', 'activation', 'mix', 'ema')
@@ -28,7 +29,8 @@ KEYS = ('width', 'epochs', 'optimizer', 'sgd_lr', 'adamw_lr', 'batch_size', 'act
 
 def newest_mode2_db() -> Path | None:
     dbs = sorted(
-        [*(RESULTS / 'jobs' / 'on-vm').glob('*/study.db'), *(RESULTS / 'jobs' / 'tune_on_vm').glob('*/study.db')], key=lambda p: p.stat().st_mtime
+        [db for stage in ('on-vm', 'tune_on_vm') for root in (RESULTS / 'jobs' / stage, job_dir(stage)) for db in root.glob('*/study.db')],
+        key=lambda p: p.stat().st_mtime,
     )
     return dbs[-1] if dbs else None
 

@@ -11,9 +11,12 @@ import math
 import sys
 from pathlib import Path
 
+from runq.queue.collect import job_dir
 from runq.search.hpo import rung_check, simulate_rungs
 
-roots = [Path(a) for a in sys.argv[1:]] or [Path(__file__).resolve().parents[2] / 'results' / 'jobs' / d for d in ('distributed', 'tune')]
+roots = [Path(a) for a in sys.argv[1:]] or [
+    r for d in ('distributed', 'tune') for r in (Path(__file__).resolve().parents[2] / 'results' / 'jobs' / d, job_dir(d))
+]
 curves = []
 for root in roots:
     for f in root.glob('*/result.json'):

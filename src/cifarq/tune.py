@@ -90,6 +90,35 @@ def sampler(seed: int = 0, startup: int = 16):
         return optuna.samplers.TPESampler(seed=seed, multivariate=True, group=True, constant_liar=True, n_startup_trials=startup)
 
 
+def misfit(params: dict, space_fn=None) -> list[str]:
+    """Why ``params`` cannot start a search as an enqueued trial of ``space_fn`` (default ``space``): the parameters it lacks, those the space
+    never asks for and values outside their ranges (an old study's point, or a candidate scored by older code); empty
+    when it fits."""
+    import optuna
+
+    problems: list[str] = []
+
+    class Probe(optuna.trial.FixedTrial):
+        def _suggest(self, name, distribution):
+            if name not in self._params:
+                problems.append(f'{name}: missing')
+                low = getattr(distribution, 'low', None)
+                return distribution.choices[0] if low is None else low
+            value = self._params[name]
+            try:
+                inside = distribution._contains(distribution.to_internal_repr(value))
+            except ValueError:  # (a categorical's to_internal_repr refuses a value not among its choices)
+                inside = False
+            if not inside:
+                problems.append(f'{name}: {value!r} outside {distribution}')
+            self._suggested_params[name] = value
+            return value
+
+    probe = Probe(params)
+    (space_fn or space)(probe)
+    return problems + [f'{k}: not in the space' for k in params if k not in probe.params]
+
+
 def space(trial, schedule_free: bool = True) -> dict:
     s = trial.suggest_float
     c = trial.suggest_categorical
@@ -380,6 +409,8 @@ def on_vm(
             'best_trial': best.number if best else None,
             'best_params': best.params if best else None,
             'best_test_acc': best.user_attrs.get('test_acc') if best else None,
+            # (the starting points' values, in order: the scoreboard's baseline)
+            'warm_values': [t.value for t in study.trials[: len(warm_points)] if warm and t.state.name == 'COMPLETE'],
         }
         Path('progress.json.part').write_text(json.dumps(doc, indent=1) + '\n')
         Path('progress.json.part').replace('progress.json')
@@ -405,6 +436,9 @@ def on_vm(
             smooth=pruner != 'none',
             log=progress,
         )
+    if not any(t.state.name == 'COMPLETE' for t in study.trials):
+        errors = [t.user_attrs['error'] for t in study.trials if 'error' in t.user_attrs]
+        raise RuntimeError(f'no trial completed ({len(study.trials)} tried); first error: {errors[0] if errors else "none recorded"}')
     best = study.best_trial
     out = _summary(study, warm_points, t0, warm, family)
     out.update(pruner=pruner, startup=startup, cap=cap if family != 'b0' else None, max_epochs=max_epochs if family != 'b0' else None)

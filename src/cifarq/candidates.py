@@ -187,6 +187,15 @@ def params_of(entry_id: str) -> dict[str, Any]:
     raise KeyError(f'{FILE}: no candidate {entry_id!r}')
 
 
+def start_point(spec: str, path: Path = FILE) -> dict[str, Any]:
+    """The candidate a search starts from: ``best`` (the best search result by validation accuracy) or a candidate id;
+    its entry, hyperparameters included."""
+    entry = best('search', 'val_acc', path=path) if spec == 'best' else next((e for e in entries(path) if e['id'] == spec), None)
+    if entry is None:
+        raise KeyError(f'{path}: no candidate {spec!r}')
+    return entry
+
+
 def main() -> None:
     """Print the best candidate per stage group and metric, and whether it is stale."""
     ds = (paths.read_manifest('dataset') or {}).get('sha256')
