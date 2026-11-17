@@ -34,3 +34,8 @@ hub.ResNet9._from_pretrained
 
 # a queue job names it as a string (tune.TRAIN_SEEDS: pipeline/60_champion.py)
 train.train_seeds
+
+# torch attributes cifarq.resnet18 sets: the CIFAR stem drops torchvision's max-pool; cuDNN autotuning
+torchvision_resnet = None
+torchvision_resnet.maxpool
+torchvision_resnet.benchmark

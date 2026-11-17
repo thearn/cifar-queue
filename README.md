@@ -30,7 +30,7 @@ python -c "from cifarq.train import train; print(train(epochs=16, save='model')[
 
 ## Problem
 
-The data is CIFAR-10 from the Hugging Face hub ([uoft-cs/cifar10](https://huggingface.co/datasets/uoft-cs/cifar10), at a pinned revision), decoded once into a 184 MB `.npz` by the data stages, whose hashes are recorded in `data/manifests/`. Training uses 45000 images, the search optimises accuracy on a fixed 5000-image validation split (the same images since the first study: `configs/data.toml`, `[split]`), and the 10000 test images are only reported, never tuned on.
+The data is CIFAR-10 from the Hugging Face hub ([uoft-cs/cifar10](https://huggingface.co/datasets/uoft-cs/cifar10), at a pinned revision), decoded once into a 184 MB `.npz` by the data stages, whose hashes are recorded in `data/manifests/`. Training uses 45000 images and selection uses a fixed 5000-image validation split (the same images since the first study: `configs/data.toml`, `[split]`). The main model-comparison objective is now the [relative error-cost score](#primary-metric-relative-error-cost-score); the existing Optuna drivers still optimise validation accuracy as a screening objective. The 10000 test images are for reporting, not tuning; previous test exposures remain part of the research record.
 
 The model is a ResNet-9 in the style of David Page's DAWNBench entry (94 % test in 75 s on a V100, 2018), with a width multiplier covering 0.4-6.6 M parameters. Every training choice in `src/cifarq/train.py` (the network in `model.py`) is a hyperparameter with a default (`train.DEFAULTS`), and `src/cifarq/tune.py` defines a conditional search space of 53 parameters: optimiser (SGD or AdamW), schedule, regularisation, GPU-side augmentation, classifier head and logit scaling, epochs 6-30. Optional features are a switch plus a log-scaled strength reaching down to almost no effect, so the search can turn them down gradually instead of only on or off. The sampler is Optuna's multivariate TPE, with a "constant liar" so that trials running in parallel are not proposed twice, and Page's recipe (`tune.PAGE`) is always the first trial.
 
@@ -47,6 +47,52 @@ verified; `70_publish.py` marks the champion it publishes. `python -m cifarq.can
 metric, stale when it was scored on another dataset or by other training code than the current (still the best known,
 worth running again). The records up to 2026-11-10 were backfilled from the local `results/` (the G4 search's best,
 95.12 % validation, is verified by its champion, 94.58 % test over 3 seeds).
+
+## Primary metric: relative error-cost score
+
+**Maximize accuracy while charging for inference latency and model size.** This is the main scalar for model
+comparison and new autoresearch campaigns, independent of the model family:
+
+```text
+S = 100 * ((1 - reference_accuracy) / (1 - mean_validation_accuracy))
+        * (reference_latency / latency)**0.25
+        * (reference_bytes / deployed_bytes)**0.10
+```
+
+Higher is better; the frozen `d3` reference scores **100**. The weights are declared preferences, fixed before
+searching, not fitted to make a particular model win. At d3's historical accuracy, doubling bytes requires about
+**+0.34 accuracy percentage points** to break even; doubling latency requires about **+0.81 points**.
+There is no blanket requirement to stay below d3's parameter count, MACs, latency or epochs.
+
+The score applies to d3, fine-tuned ResNet-50, XGBoost on engineered features, or ensembles. Measure the **whole
+prediction pipeline**: feature extraction, preprocessing, device transfers and prediction latency, plus all
+required weights and fitted artifacts. Use the same evaluation split and serving protocol, and measure accuracy
+at the precision actually deployed. The primary track is one-view, batch 256 on a fixed T4-equipped host;
+batch 1 is a separate secondary regime. Parameter counts and MACs are diagnostics, not substitutes for bytes
+and measured latency. Pretraining data and training cost must be disclosed separately.
+
+The [metric specification](docs/metrics/README.md) defines the measurement boundary, reference, uncertainty and
+promotion rules. **NetScore is a secondary comparison**, not the optimization target. Accuracy-only screening
+and a higher single-run score do not establish a new champion.
+
+```bash
+python -m cifarq.efficiency docs/metrics/measured.json
+python -m cifarq.netscore docs/metrics/measured.json
+```
+
+The existing scorer returns ratios with each input cohort's reference at **1**; multiply by 100 for the reporting
+scale. Historical JSON files keep their original references. The
+[d3-normalized example](docs/metrics/README.md#current-reference-and-provisional-leader) reproduces the current
+batch-256 comparison: spectral `baseline` **103.86**, `d3` **100.00**, `iso_width` **98.84**. Thus `d3` is the
+reference and a useful experimental starting point, **not** the score leader.
+
+`cifarq.pipeline_score` is the family-independent evaluator: it takes any `predict(uint8 images) -> classes or
+scores` callable, checks the dataset hash, never reads the test arrays, and times the callable warmed over real
+validation batches, preprocessing and transfers included; `pipeline_score.objective` returns the score on the 100
+scale. A new model family needs only such a callable and its deployed files' byte count. The older
+`pipeline/tools/rank_saved.py` is airbench-specific and times device-resident forward passes, not the complete
+pipeline, so its rankings (`docs/metrics/measured.json`) are a separate, historical cohort: do not mix the two
+timings. Legacy training/search drivers and published models are unchanged.
 
 ## Running on the queue
 
@@ -186,6 +232,40 @@ The JAX column is with the training set passed to the compiled programs as an ar
 had been baked into each program as a 138 MB constant, which made compilation the one place PyTorch was ahead. Details,
 and what was tried and not kept (FP16 with loss scaling helped only on a T4, which has no native BF16), are in
 `docs/PLAN-jax.md`.
+
+## Results (2026-11-16/17): ResNet-18 and boosted trees under the error-cost score
+
+The first two studies to optimise the [primary score](#primary-metric-relative-error-cost-score) rather than
+accuracy, both on the local T4, both measured end to end (uint8 host images to host class IDs, batch 256, deployed
+precision) with `cifarq.pipeline_score` against d3 remeasured the same way. Validation only; the test set was not
+opened. Reproduced by `python -m cifarq.efficiency docs/metrics/resnet18-boost-final.json` (multiply by 100):
+
+| Model | Validation accuracy | End-to-end ms / 256 | Stored MB | Primary score |
+|---|---:|---:|---:|---:|
+| d3 reference, 16-seed mean | 94.934% | 3.705 | 7.21 | **100.00** |
+| Selected ImageNet recipe, three fresh seeds | 93.72% | 7.719 | 44.81 | 55.93 |
+| Selected CNN embedding/PCA/XGBoost, three paired seeds | 93.313% | 8.453 | 45.53 | 51.27 |
+| ResNet-18, ImageNet full-network fine-tune, 30 epochs | 93.30% | 7.701 | 44.81 | 52.46 |
+| ResNet-18, scratch, 100 epochs | 92.16% | 7.747 | 44.81 | 44.76 |
+
+**ResNet-18** (`cifarq.resnet18`, `cifarq.resnet18_campaign`, PyTorch, the `resnet18` extra): ImageNet-1K
+fine-tuning and scratch baselines, then a conditional Optuna search over initialisation, input resolution and stem,
+optimiser, schedule, regularisation and augmentation. The ImageNet baseline stayed the best entry and was confirmed
+on seeds 71-73 (accuracy SD 0.13 points). The search ended at 18 completed entries of the 50 allowed, when five
+consecutive per-trial timeouts tripped its failure-streak stop, so this is not a comprehensive ResNet-18 verdict.
+
+**Boosted trees** (`cifarq.image_boost`, `cifarq.boost_campaign`, the `boosting` extra): XGBoost and LightGBM on
+pooled pixels, gradient/colour descriptors and frozen ResNet-18 embeddings, with the feature extractor counted in
+latency and bytes. All 36 entries and three paired-seed checks completed; the best, embedding/PCA/XGBoost, scored
+below its own encoder's classifier. Pooled RGB and hand-made descriptors were not competitive.
+
+Neither family displaced d3. The two jobs used 8.68 T4-hours of a 24-hour allowance. Preparing either again
+(`pipeline/tools/resnet18.py --torch-python PATH`, `pipeline/tools/image_boost.py`) snapshots committed source into
+a runq job; d3's reference also needs the saved checkpoints under `results/autoresearch/`. Protocol, results and the
+unrun JAX follow-up design (FoldGrid): `docs/autoresearch/2026-11-16-resnet18/` (`SUMMARY.md`, `RESULT-E1.md`,
+`RESULT-E2.md`, `ARCHITECTURE-NEXT.md`).
+
+![Complete-pipeline comparison, including confirmed recipes and feature/learner screens](docs/metrics/resnet18-boost-final.svg)
 
 ## References
 

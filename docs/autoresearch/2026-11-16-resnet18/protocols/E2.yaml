@@ -1,0 +1,23 @@
+# Experiment E2, frozen 2026-11-16T20:11:55. Fill the blanks (null) that matter before running; this file is
+# not rewritten by any command. Submit its jobs with: runq submit DIR --experiment E2
+id: E2
+frozen: '2026-11-16T20:11:55'
+hypothesis: Boosted trees on engineered or frozen learned image features can improve the primary error-cost score
+  when all feature-extractor costs are included.
+decision: Compare six baselines, optimize the scalar primary score with Optuna, and confirm the best complete pipeline
+  using only unused original compute allowance after E1.
+milestone: M5
+study: null
+baseline: Frozen complete-pipeline d3 reference and completed ResNet18 study
+candidate: XGBoost or LightGBM with pooled RGB, HOG/color or frozen best ResNet18 embedding and optional train-only
+  PCA
+mechanism: Nonlinear tree classification on spatial descriptors or frozen learned representations; PCA can trade feature dimension for deployment cost.
+inputs: Hash-frozen train/validation only; selected ResNet18 encoder after E1; ImageNet provenance retained when applicable.
+evaluator: cifarq.pipeline_score evaluate/objective; alpha .25 beta .10; complete host uint8 to host class IDs at batch 256; all fitted inference artifacts counted.
+seeds: Baselines and search 40; confirmations 71-73 with paired preexisting encoder checkpoints when available.
+gates: 53 tests passed including both actual tree backends, encoder export, no cached-feature prediction, train-only PCA and combined-budget recovery.
+budget: No additional approval. At most min(4 hours, unused original 24 hours) after E1; <=36 study entries; <=15min per search trial; CPU and GPU wall time charged together.
+recovery: Preserve source 94fb7c866b77d1285b069e5a0a84c8779e1d15a8, SQLite, artifacts and budget.json; unclean downtime is charged; never run concurrently with E1.
+commit: 94fb7c866b77d1285b069e5a0a84c8779e1d15a8
+dirty: false
+snapshot: null

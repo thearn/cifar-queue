@@ -1,0 +1,21 @@
+# Experiment E0, frozen 2026-11-16T19:36:34. Fill the blanks (null) that matter before running; this file is
+# not rewritten by any command. Submit its jobs with: runq submit DIR --experiment E0
+# untracked files at freeze (not in the snapshot): docs/autoresearch/2026-11-16-resnet18/, src/cifarq/pipeline_score.py, src/cifarq/resnet18.py, src/cifarq/resnet18_campaign.py, tests/test_pipeline_score.py
+id: E0
+frozen: '2026-11-16T19:36:34'
+hypothesis: End-to-end deployed-fp16 d3 scores can anchor ResNet18 comparisons without hidden preprocessing cost.
+decision: Freeze the common reference before measuring or searching ResNet18.
+milestone: M0
+study: resnet18-primary-score-v1
+baseline: Saved d3 readout-recipe-spectral seeds 40-55; remeasure rather than reuse old forward-only timing.
+candidate: ResNet18 ImageNet and scratch, then conditional Optuna; complete-pipeline cohort.
+mechanism: Accuracy repays parameter bytes and latency; CIFAR stem and input resolution are structural search axes.
+inputs: Explicit hashed CIFAR10 dataset; train and validation only; ImageNet-1K disclosed for transferred runs.
+evaluator: cifarq.pipeline_score evaluate/objective; alpha .25, beta .10; b256; fp16 deployed accuracy.
+seeds: d3 40-55; baselines and search 40; finalist 71-73.
+gates: Contract correctness gates and focused tests; no new use of the test split.
+budget: 24 local T4 hours total including references and smoke; per-stage and cumulative deadlines in driver.
+recovery: Preserve SQLite, budget, completed assessments and epoch checkpoints; reconcile cumulative spending first.
+commit: 66358ae08964884e05792a563e28c1193ec10ad6
+dirty: true
+snapshot: refs/2026-11-16-resnet18/E0
