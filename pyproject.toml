@@ -16,6 +16,8 @@ dependencies = ["jax>=0.7", "flax>=0.12", "optax>=0.2.6", "numpy", "huggingface_
 
 [project.optional-dependencies]
 train = ["optuna>=4", "pyarrow", "pillow"]          # the data stages, the search
+resnet18 = ["torch>=2.6", "torchvision>=0.21", "optuna>=4"]  # optional ImageNet/scratch comparison; JAX defaults unchanged
+boosting = ["xgboost>=2.1", "lightgbm>=4.5", "scikit-learn>=1.5", "optuna>=4"]
 cuda = ["jax[cuda12]>=0.7"]                         # NVIDIA GPUs (local, Colab VMs)
 ray = ["ray[tune]>=2.50"]                            # mode 2 driven by Ray Tune (on_vm_ray), PBT
 app = ["gradio>=5", "pillow"]                        # app/app.py

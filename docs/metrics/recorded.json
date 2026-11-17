@@ -1,0 +1,94 @@
+{
+  "archive_commit": "61f36e62961d3c2634c17f8b8bb09632b3483839",
+  "assessment_date": "2026-11-16",
+  "cohorts": [
+    {
+      "id": "capacity-one-view-b256",
+      "reference": "baseline",
+      "protocol": {
+        "dataset": "56cff0f67835b54960f47a6a6bd8d47e27e5d76791c2346206bf48ce1d0509f9",
+        "split": "validation",
+        "hardware": "Tesla T4",
+        "precision": "FP16",
+        "batch": 256,
+        "timing_scope": "device-resident one-view forward, normalization and softmax; warmed JIT; median of 100 passes after 20 warmups",
+        "latency_unit": "ms/batch",
+        "size_metric": "stored_parameters",
+        "accuracy_aggregation": "mean over seeds 52,53,54,55",
+        "limitations": "Graph timings use randomly initialized weights, not the scored checkpoints. Rounded published medians; one process per architecture. Stored parameters are an explicit size proxy, not deployed bytes. d3_e150 inherits d3 timing because its inference graph is identical."
+      },
+      "sources": [
+        "61f36e62961d3c2634c17f8b8bb09632b3483839:docs/autoresearch/2026-11-12-readout-recipe-spectral/protocols/FINAL-TEST-thresholds.json",
+        "61f36e62961d3c2634c17f8b8bb09632b3483839:docs/autoresearch/2026-11-12-readout-recipe-spectral/RESULT-W.md",
+        "61f36e62961d3c2634c17f8b8bb09632b3483839:docs/autoresearch/2026-11-12-readout-recipe-spectral/RESULT-F.md",
+        "61f36e62961d3c2634c17f8b8bb09632b3483839:docs/autoresearch/2026-11-12-readout-recipe-spectral/experiments/g_gates.py"
+      ],
+      "rows": [
+        {"id": "baseline", "accuracy": 0.945, "latency": 2.630, "size": 1113336, "accuracy_policy": "one-view", "latency_policy": "one-view", "accuracy_by_seed": [0.9442, 0.9474, 0.9438, 0.9446]},
+        {"id": "d3", "accuracy": 0.95075, "latency": 3.409, "size": 1798488, "accuracy_policy": "one-view", "latency_policy": "one-view", "accuracy_by_seed": [0.9472, 0.9524, 0.9506, 0.9528]},
+        {"id": "d3_e150", "accuracy": 0.9488, "latency": 3.409, "size": 1798488, "accuracy_policy": "one-view", "latency_policy": "one-view", "accuracy_by_seed": [0.9502, 0.9492, 0.9472, 0.9486]},
+        {"id": "w_200", "accuracy": 0.95305, "latency": 6.215, "size": 4424376, "accuracy_policy": "one-view", "latency_policy": "one-view", "accuracy_by_seed": [0.9532, 0.953, 0.9522, 0.9538]}
+      ]
+    },
+    {
+      "id": "capacity-one-view-b1",
+      "reference": "baseline",
+      "protocol": {
+        "dataset": "56cff0f67835b54960f47a6a6bd8d47e27e5d76791c2346206bf48ce1d0509f9",
+        "split": "validation",
+        "hardware": "Tesla T4",
+        "precision": "FP16",
+        "batch": 1,
+        "timing_scope": "device-resident one-view forward, normalization and softmax; warmed JIT; median of 100 passes after 20 warmups",
+        "latency_unit": "ms/image",
+        "size_metric": "stored_parameters",
+        "accuracy_aggregation": "mean over seeds 52,53,54,55",
+        "limitations": "Same accuracy records as capacity-one-view-b256; not independent replication. Random-weight graph timings, rounded published medians, parameters rather than bytes. d3_e150 inherits identical d3 graph timing."
+      },
+      "sources": [
+        "61f36e62961d3c2634c17f8b8bb09632b3483839:docs/autoresearch/2026-11-12-readout-recipe-spectral/protocols/FINAL-TEST-thresholds.json",
+        "61f36e62961d3c2634c17f8b8bb09632b3483839:docs/autoresearch/2026-11-12-readout-recipe-spectral/RESULT-W.md",
+        "61f36e62961d3c2634c17f8b8bb09632b3483839:docs/autoresearch/2026-11-12-readout-recipe-spectral/RESULT-F.md",
+        "61f36e62961d3c2634c17f8b8bb09632b3483839:docs/autoresearch/2026-11-12-readout-recipe-spectral/experiments/g_gates.py"
+      ],
+      "rows": [
+        {"id": "baseline", "accuracy": 0.945, "latency": 0.330, "size": 1113336, "accuracy_policy": "one-view", "latency_policy": "one-view"},
+        {"id": "d3", "accuracy": 0.95075, "latency": 0.462, "size": 1798488, "accuracy_policy": "one-view", "latency_policy": "one-view"},
+        {"id": "d3_e150", "accuracy": 0.9488, "latency": 0.462, "size": 1798488, "accuracy_policy": "one-view", "latency_policy": "one-view"},
+        {"id": "w_200", "accuracy": 0.95305, "latency": 0.470, "size": 4424376, "accuracy_policy": "one-view", "latency_policy": "one-view"}
+      ]
+    },
+    {
+      "id": "fixed-checkpoint-policy-sweep",
+      "reference": "rate15-views6",
+      "protocol": {
+        "dataset": "56cff0f67835b54960f47a6a6bd8d47e27e5d76791c2346206bf48ce1d0509f9",
+        "split": "validation",
+        "hardware": "Tesla T4",
+        "precision": "FP16",
+        "batch": "padded fixed shapes selected by view count; source EVAL_BATCH=500",
+        "timing_scope": "sum of separately timed one-view and escalated-subset predictor passes, scaled by real/padded image count; not end-to-end gate timing",
+        "latency_unit": "ratio to rate15-views6 measured time",
+        "size_metric": "relative_model_bytes",
+        "accuracy_aggregation": "published rounded means over the same 12 M0 checkpoints",
+        "limitations": "Only 10 published settings of 21 evaluated settings survive in the report. Relative times reconstructed from rounded reported percentages. Every policy reuses the same weights, so relative model bytes are exactly 1; absolute bytes unavailable. Margin selection/merge overhead excluded; timing is padding-adjusted, not directly observed end-to-end serving."
+      },
+      "sources": [
+        "61f36e62961d3c2634c17f8b8bb09632b3483839:docs/autoresearch/2026-11-12-readout-recipe-spectral/RESULT-V.md",
+        "61f36e62961d3c2634c17f8b8bb09632b3483839:docs/autoresearch/2026-11-12-readout-recipe-spectral/experiments/v_policy_sweep.py"
+      ],
+      "rows": [
+        {"id": "rate0", "accuracy": 0.94308, "latency": 0.535, "size": 1, "accuracy_policy": "one-view", "latency_policy": "one-view"},
+        {"id": "rate5-views6", "accuracy": 0.94852, "latency": 0.689, "size": 1, "accuracy_policy": "rate5-views6", "latency_policy": "rate5-views6"},
+        {"id": "rate10-views6", "accuracy": 0.95055, "latency": 0.844, "size": 1, "accuracy_policy": "rate10-views6", "latency_policy": "rate10-views6"},
+        {"id": "rate15-views6", "accuracy": 0.95095, "latency": 1, "size": 1, "accuracy_policy": "rate15-views6", "latency_policy": "rate15-views6"},
+        {"id": "rate25-views6", "accuracy": 0.95112, "latency": 1.313, "size": 1, "accuracy_policy": "rate25-views6", "latency_policy": "rate25-views6"},
+        {"id": "rate40-views6", "accuracy": 0.95115, "latency": 1.772, "size": 1, "accuracy_policy": "rate40-views6", "latency_policy": "rate40-views6"},
+        {"id": "rate100-views6", "accuracy": 0.95115, "latency": 3.634, "size": 1, "accuracy_policy": "rate100-views6", "latency_policy": "rate100-views6"},
+        {"id": "rate15-views2", "accuracy": 0.94828, "latency": 0.692, "size": 1, "accuracy_policy": "rate15-views2", "latency_policy": "rate15-views2"},
+        {"id": "rate15-views18", "accuracy": 0.95002, "latency": 2.104, "size": 1, "accuracy_policy": "rate15-views18", "latency_policy": "rate15-views18"},
+        {"id": "rate40-views18", "accuracy": 0.95010, "latency": 4.729, "size": 1, "accuracy_policy": "rate40-views18", "latency_policy": "rate40-views18"}
+      ]
+    }
+  ]
+}

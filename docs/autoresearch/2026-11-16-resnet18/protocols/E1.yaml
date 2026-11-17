@@ -1,0 +1,22 @@
+# Experiment E1, frozen 2026-11-16T19:42:03. Fill the blanks (null) that matter before running; this file is
+# not rewritten by any command. Submit its jobs with: runq submit DIR --experiment E1
+id: E1
+frozen: '2026-11-16T19:42:03'
+hypothesis: Jointly tuned ResNet18 pretraining, input resolution/stem and training controls can repay inference
+  bytes and latency through lower CIFAR10 validation error.
+decision: Measure ordered ImageNet/scratch baselines, then bounded Optuna maximizing the adopted scalar score; confirm
+  the best recipe without exposing test data.
+milestone: M3
+study: null
+baseline: Fresh end-to-end d3 reference, seeds 40-55
+candidate: ResNet18 conditional search; see contract and PLAN
+mechanism: Joint initialization, stem/resolution, optimization and augmentation search; lower error must repay bytes and latency.
+inputs: Frozen hash-verified dataset, train/validation only; optional torchvision ImageNet-1K V1 pretraining.
+evaluator: cifarq.pipeline_score evaluate/objective; alpha .25, beta .10, reference 100; host-to-host batch 256 fp16.
+seeds: d3 40-55 in three fresh processes; training/search 40; finalist 71-73.
+gates: Contract correctness gates, 44 passing targeted tests, both stems/all augmentation families pass CPU forward/backward.
+budget: 23.9-hour driver allowance within user-approved 24 local T4 GPU-hours; <=60 study entries and one-hour search trials.
+recovery: Preserve exact source e5b6bb18fdf2fcc92a31371a1d97baa864f79dfc and source.json bytecode hashes; reconcile budget.json and queue hours before restarting.
+commit: e5b6bb18fdf2fcc92a31371a1d97baa864f79dfc
+dirty: false
+snapshot: null

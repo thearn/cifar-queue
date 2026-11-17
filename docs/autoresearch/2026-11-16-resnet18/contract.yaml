@@ -1,0 +1,52 @@
+# The evaluation contract, written before the first experiment (the autoresearch skill). Fill every field;
+# `runq brief` and `runq session show` list the blanks, and a design campaign's `session freeze` refuses until none
+# remain. Text fields may be several lines (`|`).
+kind: model
+objective: >-
+  100 * (d3_validation_error / mean_validation_error) * (d3_latency / latency)^0.25
+  * (d3_inference_bytes / inference_bytes)^0.10. End-to-end decoded host RGB to host class IDs,
+  batch 256, one view, deployed float16 on the local T4. Optuna maximizes this score, not accuracy.
+direction: max
+tolerance: >-
+  Search improvements are promising only. Three fresh finalist seeds are an initial confirmation, not
+  automatic significance. Report seed SD and repeated-process reference timing; promotion needs
+  uncertainty on the score difference against a matched incumbent and may remain inconclusive.
+gates:
+  - Dataset SHA256 56cff0f67835b54960f47a6a6bd8d47e27e5d76791c2346206bf48ce1d0509f9; training fits train only.
+  - Test arrays are never materialized or used. ImageNet-1K external data is disclosed.
+  - Local T4 only; no rented or cloud executors; single serialized campaign job.
+  - Deployed-precision accuracy, complete host-to-host preprocessing and transfers, all weights and configuration bytes.
+  - Nonfinite loss/predictions, incorrect output shape/classes, or incomplete training cannot produce a scored trial.
+evaluator: >-
+  cifarq.pipeline_score.evaluate/objective; fixed alpha=0.25, beta=0.10; d3 remeasured before search.
+  Median latency, 20 warmups and 100 requests per seed; reference repeated in three fresh processes.
+rejects_failures: >-
+  tests/test_pipeline_score.py rejects corrupt/nonfinite outputs and dataset hash mismatches; verifies sealed
+  test arrays are not read and that increased bytes must be repaid by accuracy. A real short training smoke
+  must pass before baseline-scale training.
+baseline: >-
+  Existing saved readout-recipe-spectral/d3 seeds 40-55, widths [48,192,192], depth 3, 200 epochs,
+  1,798,488 parameters. Historical reference mean 94.9338% is descriptive only; new deployed-fp16
+  accuracy, serialized bytes and end-to-end timing are frozen in results/autoresearch/resnet18-score/reference.json.
+variability: >-
+  Historical seed SD approximately 0.18 accuracy points; do not treat it as a significance threshold.
+  Remeasure all 16 d3 seeds and three timing processes. Search seed 40; finalist seeds 71,72,73.
+editable: >-
+  New optional ResNet18 implementation, generic evaluator, campaign driver, focused tests and campaign docs;
+  optional torch/torchvision dependency extra. Follow-up E2 adds image features, XGBoost/LightGBM,
+  train-only PCA and its score-driven campaign. Do not silently alter existing JAX trainers.
+protected: >-
+  Raw dataset and historical evidence, saved d3 weights/configuration and test split. Evaluator changes after
+  reference measurement require a new version/cohort and remeasurement.
+budget: >-
+  User approved 24 local T4 GPU-hours on 2026-11-16. No VMs. Sequential wall time including reference
+  measurement and idle orchestration is conservatively charged. Reference target <= 0.5h;
+  fine-tuning <= 2h, scratch <= 4h; Optuna uses remaining time except 3h confirmation reserve,
+  <=50 total trials including two baselines (reduced from 60 by the user, 2026-11-16) and <=1h per trial.
+  Each training process and the entire campaign have deadlines.
+  Follow-up E2 has no new approval and may use only min(4h, unused original 24h total) after E1 ends,
+  conservatively counting CPU and GPU experiment wall time together; <=36 study entries, <=15min per trial.
+stop: >-
+  Stop at the approved cumulative deadline, user interruption, correctness failures in the evaluator,
+  or completion of baselines, bounded Optuna and available finalist confirmation. Preserve SQLite study,
+  per-epoch weights/curves and raw measurements. Never claim an interrupted run is a completed training.

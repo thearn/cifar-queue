@@ -1,0 +1,72 @@
+{
+  "date": "2026-11-16",
+  "source_revision": "e5b6bb18fdf2fcc92a31371a1d97baa864f79dfc",
+  "campaign": "cifar-resnet18",
+  "job": 47,
+  "status": "Initial baselines only; Optuna and independent finalist confirmation remain in progress.",
+  "reporting_scale": "100 times the efficiency scorer; frozen d3 reference = 100",
+  "cohorts": [
+    {
+      "id": "resnet18-host-to-host-one-view-b256",
+      "reference": "d3",
+      "protocol": {
+        "dataset": "sha256:56cff0f67835b54960f47a6a6bd8d47e27e5d76791c2346206bf48ce1d0509f9",
+        "split": "validation",
+        "hardware": "same local Tesla T4 host; no concurrent campaign GPU jobs",
+        "precision": "deployed float16 / mixed-float16 inference; serialized weights retained as saved",
+        "batch": 256,
+        "timing_scope": "decoded host uint8 RGB to host class IDs; preprocessing and device transfers included",
+        "size_metric": "bytes of all saved inference weights and configuration",
+        "warmup": 20,
+        "repeats": 100
+      },
+      "rows": [
+        {
+          "id": "d3",
+          "accuracy": 0.9493375000000001,
+          "latency": 3.7047580117359757,
+          "size": 7210007,
+          "accuracy_policy": "one-view",
+          "latency_policy": "one-view",
+          "n_seeds": 16,
+          "accuracy_sample_sd": 0.0018340756073110325,
+          "timing_processes": 3,
+          "external_data": null,
+          "evidence": "results/autoresearch/resnet18-score/reference.json"
+        },
+        {
+          "id": "resnet18-imagenet-baseline",
+          "accuracy": 0.933,
+          "latency": 7.701334950979799,
+          "size": 44805696,
+          "accuracy_policy": "one-view",
+          "latency_policy": "one-view",
+          "n_seeds": 1,
+          "seed": 40,
+          "epochs": 30,
+          "stem": "imagenet",
+          "resolution": 64,
+          "external_data": "ImageNet-1K; torchvision ResNet18_Weights.IMAGENET1K_V1",
+          "train_seconds": 125.85699374997057,
+          "evidence": "results/autoresearch/resnet18-score/imagenet-baseline.json"
+        },
+        {
+          "id": "resnet18-scratch-baseline",
+          "accuracy": 0.9216,
+          "latency": 7.74701900081709,
+          "size": 44805695,
+          "accuracy_policy": "one-view",
+          "latency_policy": "one-view",
+          "n_seeds": 1,
+          "seed": 40,
+          "epochs": 100,
+          "stem": "imagenet",
+          "resolution": 64,
+          "external_data": null,
+          "train_seconds": 410.87167908099946,
+          "evidence": "results/autoresearch/resnet18-score/scratch-baseline.json"
+        }
+      ]
+    }
+  ]
+}

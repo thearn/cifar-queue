@@ -1,0 +1,132 @@
+{
+  "date": "2026-11-17",
+  "source_revision": "e5b6bb18fdf2fcc92a31371a1d97baa864f79dfc",
+  "trial_cap_amendment_revision": "8402d83",
+  "campaign": "cifar-resnet18",
+  "job": 47,
+  "status": "Bounded search ended after five consecutive per-trial timeouts; three fresh-seed confirmations completed. Not a completed 50-trial study or a significance test.",
+  "study": {
+    "name": "resnet18-primary-score-v1",
+    "maximum_trials": 50,
+    "entries": 23,
+    "complete": 18,
+    "failed": 5,
+    "baseline_entries": 2,
+    "completed_sampled_trials": 16,
+    "failed_trial_numbers": [18, 19, 20, 21, 22],
+    "failure_reason": "Per-run training time limits; recorded as Optuna FAIL, with no completed objective.",
+    "stop_reason": "Frozen five-consecutive-failed-trials safeguard",
+    "best_completed_entry": 0,
+    "best_completed_sampled_entry": 2,
+    "confirmation_seeds": [71, 72, 73],
+    "charged_wall_seconds": 30510.0214364361
+  },
+  "evidence": {
+    "summary": "results/autoresearch/resnet18-score/summary.json",
+    "summary_sha256": "bb3c80cf60b8d8051d24f96748287899e9852b723ef027c907696e59438dede2",
+    "reference": "results/autoresearch/resnet18-score/reference.json",
+    "reference_sha256": "369492d681028c32f08224e0eecf0be1a38b868c1c0e1ddff44eb68d003444f1",
+    "study": "results/autoresearch/resnet18-score/optuna.db"
+  },
+  "reporting_scale": "100 times the efficiency scorer; frozen d3 reference = 100",
+  "cohorts": [
+    {
+      "id": "resnet18-host-to-host-one-view-b256",
+      "reference": "d3",
+      "protocol": {
+        "dataset": "sha256:56cff0f67835b54960f47a6a6bd8d47e27e5d76791c2346206bf48ce1d0509f9",
+        "split": "validation",
+        "hardware": "same local Tesla T4 host; sequential campaign GPU jobs",
+        "precision": "deployed float16 / mixed-float16 inference; serialized weights retained as saved",
+        "batch": 256,
+        "timing_scope": "decoded host uint8 RGB to host class IDs; preprocessing and device transfers included",
+        "size_metric": "bytes of all saved inference weights and configuration",
+        "warmup": 20,
+        "repeats": 100
+      },
+      "rows": [
+        {
+          "id": "d3",
+          "accuracy": 0.9493375000000001,
+          "latency": 3.7047580117359757,
+          "size": 7210007,
+          "accuracy_policy": "one-view",
+          "latency_policy": "one-view",
+          "n_seeds": 16,
+          "accuracy_sample_sd": 0.0018340756073110325,
+          "timing_processes": 3,
+          "external_data": null,
+          "evidence": "results/autoresearch/resnet18-score/reference.json"
+        },
+        {
+          "id": "resnet18-imagenet-confirmed",
+          "accuracy": 0.9372,
+          "latency": 7.719451037701219,
+          "size": 44805696,
+          "accuracy_policy": "one-view",
+          "latency_policy": "one-view",
+          "n_seeds": 3,
+          "seeds": [71, 72, 73],
+          "accuracy_sample_sd": 0.001311487704860425,
+          "timing_processes": 3,
+          "aggregation": "mean seed accuracy and bytes; median of all 300 equally sampled request times",
+          "epochs": 30,
+          "stem": "imagenet",
+          "resolution": 64,
+          "external_data": "ImageNet-1K; torchvision ResNet18_Weights.IMAGENET1K_V1",
+          "evidence": [
+            "results/autoresearch/resnet18-score/confirmation-71.json",
+            "results/autoresearch/resnet18-score/confirmation-72.json",
+            "results/autoresearch/resnet18-score/confirmation-73.json"
+          ]
+        },
+        {
+          "id": "resnet18-imagenet-baseline",
+          "accuracy": 0.933,
+          "latency": 7.701334950979799,
+          "size": 44805696,
+          "accuracy_policy": "one-view",
+          "latency_policy": "one-view",
+          "n_seeds": 1,
+          "seed": 40,
+          "epochs": 30,
+          "stem": "imagenet",
+          "resolution": 64,
+          "external_data": "ImageNet-1K; torchvision ResNet18_Weights.IMAGENET1K_V1",
+          "evidence": "results/autoresearch/resnet18-score/imagenet-baseline.json"
+        },
+        {
+          "id": "resnet18-best-sampled-trial-2",
+          "accuracy": 0.9412,
+          "latency": 16.059891495388,
+          "size": 44805767,
+          "accuracy_policy": "one-view",
+          "latency_policy": "one-view",
+          "n_seeds": 1,
+          "seed": 40,
+          "epochs": 90,
+          "stem": "imagenet",
+          "resolution": 96,
+          "initialization": "scratch",
+          "external_data": null,
+          "evidence": "results/autoresearch/resnet18-score/trial-0002.json"
+        },
+        {
+          "id": "resnet18-scratch-baseline",
+          "accuracy": 0.9216,
+          "latency": 7.74701900081709,
+          "size": 44805695,
+          "accuracy_policy": "one-view",
+          "latency_policy": "one-view",
+          "n_seeds": 1,
+          "seed": 40,
+          "epochs": 100,
+          "stem": "imagenet",
+          "resolution": 64,
+          "external_data": null,
+          "evidence": "results/autoresearch/resnet18-score/scratch-baseline.json"
+        }
+      ]
+    }
+  ]
+}

@@ -79,3 +79,14 @@ chunks of `EVAL_BATCH`, instead of computing every image's full views and maskin
 for calls of 500 images or more (1000: 16.6 ms against 22.6 ms) and keeps one masked program below that, where waiting
 on the margins costs more than it saves (batch 1: 3.4 ms either way). This is follow-up 1 of
 `docs/autoresearch/2026-11-10-fp16-t4/SUMMARY.md`.
+
+## 2026-11-16/17: the error-cost score, and ResNet-18 and boosted trees measured under it
+
+The primary model-comparison metric is now the relative error-cost score (`cifarq.efficiency`, specified in
+`docs/metrics/README.md`): relative validation error against the d3 airbench reference, charged for end-to-end
+latency (exponent 0.25) and deployed bytes (0.10), d3 = 100. `cifarq.pipeline_score` measures any complete prediction
+callable under one protocol (T4, batch 256, uint8 host images to host classes). Two local-T4 studies optimised it
+directly: torchvision ResNet-18 (ImageNet fine-tune, scratch, then Optuna; best confirmed 55.93 over seeds 71-73) and
+XGBoost/LightGBM on pixel, descriptor and frozen-ResNet features (best confirmed 51.27). Neither came near d3, whose
+end-to-end batch is about half the latency at a sixth of the bytes. 8.68 T4-hours; test not opened. Summary:
+`docs/autoresearch/2026-11-16-resnet18/SUMMARY.md`.

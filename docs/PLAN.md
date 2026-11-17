@@ -19,14 +19,31 @@ one VM job). "Good enough" is matching Page's recipe on the same split; beating 
 
 ## Metric and splits
 
-- The objective is validation accuracy (`evaluate.OBJECTIVE`); test accuracy is reported beside it, never tuned on.
+- The primary model-comparison and new-campaign objective is the
+  [relative error-cost score](metrics/README.md): maximize relative validation-error reduction with latency
+  weight `0.25` and deployed-byte weight `0.10`, reporting the frozen d3 reference as 100. Measure complete
+  prediction pipelines under one fixed serving protocol; NetScore is secondary.
+- Legacy training/search drivers still use validation accuracy (`evaluate.OBJECTIVE`) for screening. They do
+  not yet measure the cross-family end-to-end objective. Final promotion requires the primary score and an
+  uncertainty assessment; this adoption does not retroactively change historical studies or their objectives.
+- The new [ResNet-18 campaign](autoresearch/2026-11-16-resnet18/PLAN.md) optimizes the primary score with
+  host-to-host evaluation, freshly remeasured d3, ImageNet/scratch baselines and conditional Optuna.
+- After its boosting follow-up, the [FoldGrid proposal](autoresearch/2026-11-16-resnet18/ARCHITECTURE-NEXT.md)
+  supplies a literature-grounded JAX structural track alongside compact-CNN distillation. It is unrun;
+  training needs a separately bounded budget and must preserve the same evaluator and reference.
+- Test accuracy is reported separately, never used to select candidates. Disclose prior test exposures.
 - Validation: 5000 training images, the first 5000 of `numpy.random.default_rng(1234).permutation(50000)`, kept since
   the first study (not the template's hash split; changing it would make every study incomparable). Test: the hub's
   10000.
 
 ## Reference
 
-David Page's DAWNBench recipe (ResNet-9, 24 epochs) as a point of the space (`tune.REFERENCE`, `tune.PAGE`): 93.5 %
+The primary score's reference is the saved d3 recipe, not necessarily the best-scoring model. Its
+[identity, historical normalization and remeasurement requirements](metrics/README.md#current-reference-and-provisional-leader)
+are fixed in the metric specification. There is no default hard cap at its size or compute; hard limits require
+an actual deployment or campaign resource constraint.
+
+The original accuracy-search reference remains David Page's DAWNBench recipe (ResNet-9, 24 epochs) as a point of the space (`tune.REFERENCE`, `tune.PAGE`): 93.5 %
 validation, 93.1 % test in one run on the 4060 (154 s); 94 % in his own runs on all 50000 images.
 
 ## Compute
