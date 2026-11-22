@@ -127,7 +127,7 @@ def eqairbench_space(
     trial: optuna.Trial, cap: int = 2_000_000, max_epochs: float = 100, kd: str = '', lows: tuple[int, int, int] = (96, 96, 112)
 ) -> dict:
     """Session 2026-10-30-equivariant-small, M5: the flip-equivariant airbench (depth 3; the last 1 or 2 groups
-    equivariant, M3's winner), structured receptive fields on or off (M4's one non-negative lever), widths under the
+    equivariant, M3's winner), structured receptive fields on or off (M4's one non-negative factor), widths under the
     cap, and the recipe around the finalist's at a fixed ``max_epochs`` (E*). Scored at one view (``tta_level`` 0;
     ``val_acc_by_views`` still reports 2 and 6). Distillation from ``kd`` (one airbench96) with its weight free."""
     c, s = trial.suggest_categorical, trial.suggest_float

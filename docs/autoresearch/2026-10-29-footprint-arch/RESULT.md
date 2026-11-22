@@ -42,7 +42,7 @@ images, the intervals include zero, as expected.
 ## Target A (96.0 % at ≤ 2 M parameters and ≤ 40 epochs): not met
 
 The finalist is 0.55 pp short on test and 0.4 pp short on validation. The plan's stop rule (§9) ended the attempt:
-the levers screened after the recipe search added +0.23 pp of validation over the 95.40 % baseline, against the rule's
+the factors screened after the recipe search added +0.23 pp of validation over the 95.40 % baseline, against the rule's
 0.3 pp. For scale, airbench96 itself (9.9 M parameters, 37 epochs) reaches 95.87 % on the same 45,000 images.
 
 What was tried, each with 3 seeds unless noted (the full record is in the ledger):

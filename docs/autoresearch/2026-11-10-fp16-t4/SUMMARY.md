@@ -90,7 +90,7 @@ dispatch-bound.
 - The 8.4x-larger teacher cost only 1.42x the time.
 - A 27.8% MAC cut gave no measurable speedup.
 
-The levers that turn into time here are **precision**, **how many passes run**, and **which images get the
+The factors that turn into time here are **precision**, **how many passes run**, and **which images get the
 expensive pass**.
 
 Other negatives, each limited to the recipes, ranks and seeds tested:

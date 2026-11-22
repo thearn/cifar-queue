@@ -42,7 +42,7 @@ seed does not pin a run; per-run noise is ~0.2 pp and 3-seed means move by up to
 
 ## M4 readout (val at 1 / 6 views, 3 seeds, paired with M3's D1-e100: 95.62 / 96.02)
 
-| Lever | 1 view | Δ (paired) | 6 views | Outcome |
+| Factor | 1 view | Δ (paired) | 6 views | Outcome |
 |---|---|---|---|---|
 | SRF (160/136/176, 1.94 M, 353 M MACs) | 95.73 | +0.11 (+0.22/+0.12/0.00) | 96.09 | Inconclusive; crosses 95.7 |
 | KD weighted by disagreement | 95.55 | −0.07 | 95.98 | Null |

@@ -49,7 +49,7 @@ Both targets can in principle be reached with known tools (airbench's recipe, di
 search). That would be a new point on the frontier, not a new method. The campaign keeps room for the second kind
 of result through the **method track** (§5, "Methods"): hypotheses about *how* to train or run a small network
 better, each tested as an ablation on the strongest known-tools recipe, so a gain can be attributed to the idea
-rather than to tuning. A validated method joins the search space as a lever; a null result is reported as one. The
+rather than to tuning. A validated method joins the search space as a factor; a null result is reported as one. The
 known-tools recipe is established first (M2), because without it no method gain is attributable; after that the
 method track runs alongside the searches and has its own budget share (§7).
 
@@ -162,7 +162,7 @@ Goal B, the replicated baseline is retrained with each added ingredient in turn,
    gain inside ±0.10 pp; the null is recorded with the same care as a gain;
 4. it can be described in a paragraph and reimplemented from that paragraph.
 
-A validated method enters every later search as a lever; its contribution to the final model is one of the
+A validated method enters every later search as a factor; its contribution to the final model is one of the
 ablations above.
 
 ## 3. Mutation boundary
@@ -252,7 +252,7 @@ counts are for 32x32 input and 10 classes; published accuracies are at their aut
 | **A9** CCT-6/3x1 narrowed, WRN-16-3 | ≤ 2 M | ≤ 2 M | CCT-7/3x1 96.53 % (3.76 M, 300 epochs); WRN-16-4 ~95 % | high MACs; long training |
 | **A10** FastBoost (arXiv 2511.01026) | as published, if code exists | 0.85 M | 95.57 % (abstract; epochs unknown) | M0 reads the full text first |
 
-**Recipe levers shared by every family** (so attribution is fair): distillation from the teacher pool (R1);
+**Recipe factors shared by every family** (so attribution is fair): distillation from the teacher pool (R1);
 multi-crop TTA (1, 2 or 6 views) with its cost counted; airbench's tricks (2x2 whitening first layer, dirac init,
 BN without affine scale and its bias at 64x the learning rate, Lookahead, alternating flip, label smoothing 0.2);
 AutoAugment, RandAugment or TrivialAugment; cutout, mixup/cutmix; the existing 53-parameter space with schedule-free
@@ -355,7 +355,7 @@ strong). Expected: A1-A3 and A6 survive; A4-A5 fall to launch overhead or memory
 - **Per surviving family, one mode 2 study**, exhaustive in the sense of run to saturation rather than to a count:
   - **Space:** the family's architectural hyperparameters (widths per stage, depth, kernel and patch size, growth
     rate, as applicable) sampled only where the 2 M cap holds; epochs 20-40; the full training space; every
-    recipe lever in §5 including distillation (teacher, temperature, weight) and TTA views. Ranges wide enough that
+    recipe factor in §5 including distillation (teacher, temperature, weight) and TTA views. Ranges wide enough that
     the best region is not at an edge; a best trial at an edge widens the range and the search resumes.
   - **Sampler:** multivariate TPE with constant liar, warm-started with the family's M2 best and the airbench recipe.
     A cold restart with another seed for the two finalist families.
@@ -457,7 +457,7 @@ seed each. Neither distillation from one airbench96 (95.9 % val) nor wider range
 lie within 0.22 pp. M2's other families are below airbench untuned, except PyramidNet-110 (95.18 % val, 0.3 pp
 under).
 
-**What changes.** The budget moves from exhaustive per-family recipe search to levers that can plausibly be worth tenths
+**What changes.** The budget moves from exhaustive per-family recipe search to factors that can plausibly be worth tenths
 of a point at a fixed 2 M parameters and 40 epochs, each screened locally first against the airbench top-5 3-seed
 retrains (seeds 1-3, the baseline), and only then searched on the G4:
 
@@ -474,7 +474,7 @@ retrains (seeds 1-3, the baseline), and only then searched on the G4:
    MT3-MT5 follow only if one of these gives ≥ 0.15 pp.
 3. **PyramidNet study** (running when this was written; 50 minutes on the G4). If its best beats airbench's 95.64 %,
    it gets the same retrain and becomes the base for P1/P2.
-4. **G4 spend after this** goes to one combined study, with the winning levers fixed or in the space, on the best
+4. **G4 spend after this** goes to one combined study, with the winning factors fixed or in the space, on the best
    family. Nothing more is spent on airbench-only recipe search.
 
 **Unchanged.** Goal A's rules, the evaluator, the win rules, the hold-out, and the 50-unit cap (12.0 units spent

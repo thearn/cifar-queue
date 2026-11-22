@@ -1,4 +1,4 @@
-# Autoresearch session: a TTA-free 96 % at 2 M parameters, and equivariance as the lever
+# Autoresearch session: a TTA-free 96 % at 2 M parameters, and equivariance as the factor
 
 Session `2026-10-30-equivariant-small`, opened 2026-10-30 at commit `3c4eb93` (branch `fparch/main`, the closed
 session `2026-10-29-footprint-arch`'s integration branch, which carries all the code). Records: this plan,
@@ -74,7 +74,7 @@ contest on the G4 (~30 units a run) and is not planned in detail.
 
 Training time in seconds as a goal or gate (recorded only; the airbench leaderboard rules are noted in
 `literature.md` for the write-up). Quantization. Changing the split or the accuracy function. Publishing or opening
-a pull request against airbench without the user's approval. Repeating the last session's rejected levers (ensemble
+a pull request against airbench without the user's approval. Repeating the last session's rejected factors (ensemble
 distillation at short schedules, trunk-and-tails, TTA beyond 6 views, DenseNet/PyramidNet on the 4060, per-family
 recipe search past saturation).
 
@@ -130,7 +130,7 @@ Promising; a Null is recorded with the same care; the final model's gains are de
 
 ## 3. Mutation boundary and branches
 
-**Editable:** `src/cifarq/airbench.py` (new levers behind flags whose defaults keep every earlier run bit-identical;
+**Editable:** `src/cifarq/airbench.py` (new factors behind flags whose defaults keep every earlier run bit-identical;
 `test='sealed'`), `src/cifarq/methods.py` and new modules under `src/cifarq/` (p4m convolution, BlurPool,
 structured receptive fields, the Fourier block, SE, proxy filtering), `src/cifarq/families.py` and `tune.py` (the
 two-seed objective, the equivariant space, a multi-objective study), `pipeline/tools/*`, tests.
@@ -146,7 +146,7 @@ session, `layout` and `master`.
 - **Branches are per unit of new code, not per experiment,** and hold as many commits as the work needs.
   - `eqsm/M1`: all of M1's infrastructure, one commit per piece (sealed test, two-seed objective, p4m layer,
     BlurPool, structured receptive fields, Fourier block, SE, proxy filtering, the MAC-count test, the matched-MAC
-    helper), every lever behind a flag whose default keeps earlier runs bit-identical. Merged `--no-ff` once, after
+    helper), every factor behind a flag whose default keeps earlier runs bit-identical. Merged `--no-ff` once, after
     the CPU tests and the regression gate.
   - Screens, the epoch curve and searches that run merged code get **no branch**; their protocols and ledger rows go
     straight onto `eqsm/main`.
@@ -188,7 +188,7 @@ queue returns the old run's result (it de-duplicates identical calls).
 
 ### 5.1 The equivariance track (the method goal; H1 and its parts)
 
-| ID | Lever | Mechanism | Evidence and cost | First test |
+| ID | Factor | Mechanism | Evidence and cost | First test |
 |---|---|---|---|---|
 | **Q1** p4m group convolution, last two groups | kernels shared over the 8 flips and 90° rotations; the group pooled at the end (`PairMaxPool` generalised) | Cohen & Welling: p4m-ResNet44 beats planar at equal parameters, but their numbers were not reproduced by two later papers; Weiler & Cesa: steerable WRN28/10 3.87 → 3.28 % with no extra test cost at equal width. Rotations are not a CIFAR symmetry: their "decreasing equivariance" D8→D4→D1 beat global equivariance on natural images, and our `flip_eq=2` is already the D1 tail of that pattern | p4m in group 3 only, D4 in group 2 + D1 in group 3, and D1 D1 (the finalist), each at matched parameters (widths lowered) and at matched MACs (plain widened), 3 seeds, 40 and 100 epochs |
 | **Q2** anti-aliased downsampling (BlurPool) | a fixed low-pass before each `MaxPool2d(2)` makes the features shift-equivariant up to sampling, which is what airbench's translate-TTA views compensate for | Zhang 2019 (`adobe/antialiased-cnns`): consistency gains; no CIFAR accuracy table found, so the accuracy effect is open. Costs one depthwise filter per pooling | finalist ± BlurPool at one view against the finalist with 6 views; 3 seeds |
@@ -197,7 +197,7 @@ queue returns the old run's result (it de-duplicates identical calls).
 
 ### 5.2 Other operators and blocks (cheap screens, local)
 
-| ID | Lever | Why it might help here | Risk |
+| ID | Factor | Why it might help here | Risk |
 |---|---|---|---|
 | **O1** Fourier global filter in group 3 | FFT → learned complex filter per channel → inverse FFT (GFNet); global mixing at 4×4 or 8×8 for C×8×5×2 parameters, trivial MACs | GFNet reports ImageNet only; FFT needs fp32 (`precision='amp'`); untested on 32×32 from scratch |
 | **O2** squeeze-and-excitation | ~0.3-1 pp on CIFAR ResNets at 400 epochs; nearly free in parameters | no controlled short-schedule result exists; attention may need epochs to pay |
@@ -206,7 +206,7 @@ queue returns the old run's result (it de-duplicates identical calls).
 
 ### 5.3 The data side
 
-| ID | Lever | Evidence | Note |
+| ID | Factor | Evidence | Note |
 |---|---|---|---|
 | **D1** proxy filtering (airbench96_faster) | a 32/64/64 proxy trained first; the student back-propagates only the hardest 512 of each 1024 by proxy loss; 96.00 % at 45 epochs and 9.9 M, n = 200 | the documented record trick in exactly this regime; at our size the question is whether a 2 M student benefits from spending its epochs on the hard half. Charged at 0.5 epoch a pass (§2.1), so 100 charged epochs buys 200 passes |
 | **D2** disagreement-weighted distillation (MT4, built, unscreened) | the same idea with teacher-student KL as the score and the airbench96 teachers from the last session | the plain KD gain was +0.1-0.3 pp; D1 and D2 are compared head to head |
@@ -236,14 +236,14 @@ Ensemble teachers, tails, > 6 views (last session's nulls).
   result stands or is null. If no equivariant arm beats plain + TTA at matched MACs by ≥ 0.15 pp at any budget, H1
   is reported null and the target rests on §5.2-5.3 plus the recipe; the session continues either way.
 - **M4 Screens (local, ~2 days):** Q4, O1-O4, D1, D2 on the best M3 arm at the M2 epoch budget, 3 paired seeds each,
-  matched parameters and MACs; Promising levers join the space. After every two results the order is revised.
+  matched parameters and MACs; Promising factors join the space. After every two results the order is revised.
 - **M5 Searches (G4, ≤ 24 units):** one noise-aware study on the equivariant airbench family with the Promising
-  levers and the recipe (epochs up to the budget, widths under the cap, the equivariance pattern as a categorical,
+  factors and the recipe (epochs up to the budget, widths under the cap, the equivariance pattern as a categorical,
   Muon/SGD, filtering on/off), warm-started from M3's best; report-only rungs first, `fit_rungs.py`, resume. A cold
   restart with another seed if the first saturates below target. **Saturation rule:** best two-seed validation up
   < 0.10 pp over the last 40 % of trials and the top 10 within 0.3 pp, or the family's unit cap.
 - **M6 Confirmation (local):** top 5 × 3 seeds (seeds 1-3); the finalist × 5 seeds with saved models; the record-format
-  50k run; the bench against B0; the test set opened once per final model; CIFAR-10.1 once; the ablation of each lever
+  50k run; the bench against B0; the test set opened once per final model; CIFAR-10.1 once; the ablation of each factor
   in the final recipe (3 paired seeds). **Push notification to the user when the target is Validated.**
 - **M7 The MAC/accuracy front (G4, ~6 units, if ≥ 10 units remain):** a two-objective study (validation, MACs at one
   view) over the equivariant family under the cap; the Pareto set retrained over 3 seeds; reported as a table.
@@ -271,4 +271,4 @@ BlurPool; M4 needs the rest of M1. Nothing on the G4 before the user confirms th
   queue de-duplicates identical calls, including cancelled ones).
 - Record the Colab balance at the start and end of every VM job; the card's stored rate is a check, not the truth.
 - Matched MACs beside matched parameters in every comparison, since the one validated method traded MACs for views.
-- Stop a lever after 3 seeds inside ± 0.10 pp; do not re-run a null at another weighting.
+- Stop a factor after 3 seeds inside ± 0.10 pp; do not re-run a null at another weighting.
