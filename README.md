@@ -163,7 +163,7 @@ more for runs this short.
 
 Two agent-run campaigns (plans, ledgers and write-ups in `docs/autoresearch/`) searched for a better network than the
 ResNet-9 above at a smaller inference footprint, using airbench's architecture and recipe (`src/cifarq/airbench.py`)
-with flip-equivariant convolutions and other levers behind flags (`src/cifarq/methods.py`). All numbers are on the
+with flip-equivariant convolutions and other factors behind flags (`src/cifarq/methods.py`). All numbers are on the
 same 45000/5000 split, 5 seeds, test opened once for the final models in the second session.
 
 | Model | Params | Epochs | Views | Test | MACs/image |

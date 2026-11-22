@@ -33,7 +33,7 @@ pool can use the same turns (step 3).
 
 ## Steps, in order of value
 
-1. **Early stopping: ASHA and Hyperband**, the largest lever.
+1. **Early stopping: ASHA and Hyperband**, the largest factor.
    - The trial reports validation accuracy after each epoch and asks whether to stop.
    - In mode 2 the trials are processes on the same VM as the study's SQLite file, so a trial opens the study itself
      (`optuna.load_study`, then `trial.report` and `should_prune` through the `Trial` with its number), passed

@@ -1,4 +1,4 @@
-# M4-screens: levers on the flip-equivariant finalist at 100 epochs
+# M4-screens: factors on the flip-equivariant finalist at 100 epochs
 Frozen: 2026-10-30, commit fa4b708 (eqsm/main; M1 and O4 merged). Dataset dataset-6e01ae0c4036. Run on the G4 (the
 4060 is shared with another session; PLAN §4 allows this), grid `results/autoresearch/eqsm/m4-grid.json`.
 
@@ -10,6 +10,6 @@ Frozen: 2026-10-30, commit fa4b708 (eqsm/main; M1 and O4 merged). Dataset datase
   not charged); KDW (`kd_weighting='disagree'`). The Fourier block (O1) is dropped: after the whitening layer's valid
   2×2 convolution the group maps are 15, 7 and 3 pixels, where a 3×3 convolution is already nearly global.
 - **Gates (PLAN §2.1):** Promising at ≥ +0.15 pp at 1 view over the baseline (3 paired seeds); Null inside ± 0.10.
-  The target decision (PLAN §1): if no lever, alone or combined, brings one view to ≥ 95.7 % at 100 epochs, the
+  The target decision (PLAN §1): if no factor, alone or combined, brings one view to ≥ 95.7 % at 100 epochs, the
   target falls back to six views.
 - **Compute:** 18 trainings plus the 9-run PW control repair of M3 (param_cap 0; in this grid as `M3a2-PW-e*`, M3 attempt 2), ~40 min, cap 8 units.
