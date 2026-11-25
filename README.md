@@ -1,5 +1,12 @@
 # cifar-queue
 
+> **Archived 2026-11-24.** This repository is no longer developed. It began as a test of training CIFAR-10 through
+> runq and grew into autoresearch campaigns on small CIFAR-10 networks. One of them found a result worth sharing: on
+> broad-label image tasks, sharing mirror-image filters beats narrowing a network at the same parameter count. That
+> study moves to its own repository, cut down to the code that reproduces and checks it; it will be linked here when it
+> is public. The code, results and notes below are kept as they were. The Hugging Face model
+> ([thearn/cifar10-resnet9](https://huggingface.co/thearn/cifar10-resnet9)) is unchanged.
+
 This repository is a test problem for runq, my compute queue library (not public at the moment). runq is a thin wrapper that takes local and cloud GPUs and CPUs from a mix of sources (here a local RTX 5070 Ti, Colab VMs and rented cards) and presents them as one compute pool, so that HPC and ML workflows can be submitted as ordinary function calls without caring where they run. It handles environment and code sync, sending only what changed to storage buckets in the same cloud region as the compute to avoid egress costs, and copying between regions only when a job needs it. It is close to a mix of existing queue managers, but handles my own particular needs.
 
 I plan to push and update my test models publicly. The code is on GitHub ([thearn/cifar-queue](https://github.com/thearn/cifar-queue)) and the trained model on the Hugging Face hub ([thearn/cifar10-resnet9](https://huggingface.co/thearn/cifar10-resnet9)), which holds a snapshot of this repository at each publish.
